@@ -208,4 +208,5 @@ def install():
         # A PC with no screen: the code and the address go to ComfyUI's console.
         agent.call(agent.start_pairing(studio(os.environ.get("FUOBE_CONNECT_SITE")) or sites[0]))
     elif not store.load().get("token"):
-        log.info("[Fuobe Connect] To run Fuobe jobs here with no browser tab open: ComfyUI menu → Extensions → Connect to Fuobe.")
+        # ASCII only: on Windows a log that goes to a file or a pipe takes only the system's code page.
+        log.info("[Fuobe Connect] To run Fuobe jobs here with no browser tab open: ComfyUI menu > Extensions > Connect to Fuobe.")

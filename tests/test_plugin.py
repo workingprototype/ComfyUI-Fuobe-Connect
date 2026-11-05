@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import io
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -259,6 +261,23 @@ class PluginTest(unittest.TestCase):
         for patcher in (mock.patch.dict(os.environ), mock.patch.dict(sys.modules)):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_starts_when_the_log_goes_to_a_file(self):
+        # On Windows, ComfyUI's log written to a file or a pipe takes only the system's code page (cp1252 here).
+        out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", write_through=True)
+        handler = logging.StreamHandler(out)
+        root = logging.getLogger()
+        level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        self.addCleanup(root.setLevel, level)
+        self.addCleanup(root.removeHandler, handler)
+        with mock.patch.object(sys, "stderr", out):
+            load_pack(self.user_dir)
+        text = out.buffer.getvalue().decode("cp1252")
+        self.assertNotIn("Couldn't start", text)
+        self.assertNotIn("Logging error", text)
+        self.assertIn("Extensions > Connect to Fuobe", text)
 
     def test_loads_into_comfyui_and_pairs(self):
         user_dir = self.user_dir

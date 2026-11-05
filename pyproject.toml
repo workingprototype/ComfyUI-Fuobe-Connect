@@ -1,7 +1,7 @@
 [project]
 name = "fuobe-connect"
 description = "Use this ComfyUI from Fuobe with one install: no start flag, no extra file. Trusts only the Fuobe studios you name, checks every workflow they send against the node list it ships, keeps ComfyUI's own check for every other website, and can pair with your Fuobe account for Safari, phones and PCs with no screen."
-version = "1.0.0"
+version = "1.0.1"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 # aiohttp comes with ComfyUI: naming it here could make ComfyUI-Manager change ComfyUI's own copy.
