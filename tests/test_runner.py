@@ -155,7 +155,7 @@ class VetTest(unittest.TestCase):
     def test_bad_task_id_is_skipped(self):
         site = FakeSite()
         run(runner(site).run(task(id="../../api/settings")))
-        run(runner(site).run(task(lease="x\r\nX-Evil: 1")))
+        run(runner(site).run(task(lease="x\r\nX-Other: 1")))
         self.assertEqual(site.calls, [])
 
 
@@ -179,7 +179,7 @@ class RunTest(unittest.TestCase):
         self.assertTrue(any(c[0] == "PUT" and c[1].startswith("/api/gpu/computer/tasks/task_abcdefgh1234/outputs/0?") for c in site.calls))
 
     def test_follow_only_its_own_batch(self):
-        """A studio can't point the runner at your own results with another prefix (ComfyUI's default 'ComfyUI')."""
+        """The runner follows only its own job's prefix, never another one (ComfyUI's default 'ComfyUI')."""
         yours = str(uuid.uuid4())
         comfy = FakeComfy(history={yours: {"prompt": [1, yours, {"9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ComfyUI"}}}], "outputs": {"9": {"images": [{"filename": "ComfyUI_00001_.png", "subfolder": "", "type": "output"}]}}}})
         site = FakeSite({"/report": {"_event": "finished", "follow": "ComfyUI"}})
@@ -225,13 +225,13 @@ class RunTest(unittest.TestCase):
     def test_refused_answer_is_slimmed(self):
         class Refusing(FakeComfy):
             async def post_json(self, path, body, timeout=60):
-                return 400, {"error": {"type": "prompt_outputs_failed_validation", "message": "x"}, "node_errors": {"4": {"class_type": "CheckpointLoaderSimple", "errors": [{"message": "Value not in list", "details": "ckpt_name: 'a' not in ['secret.safetensors']", "extra_info": {"received_value": "a"}}]}}}
+                return 400, {"error": {"type": "prompt_outputs_failed_validation", "message": "x"}, "node_errors": {"4": {"class_type": "CheckpointLoaderSimple", "errors": [{"message": "Value not in list", "details": "ckpt_name: 'a' not in ['mine.safetensors']", "extra_info": {"received_value": "a"}}]}}}
 
         site = FakeSite()
         run(runner(site, Refusing()).run(task()))
         ev = site.events()[-1]
         self.assertEqual(ev["event"], "refused")
-        self.assertNotIn("secret.safetensors", str(ev))
+        self.assertNotIn("mine.safetensors", str(ev))
 
     def test_paused_takes_no_job(self):
         site = FakeSite()

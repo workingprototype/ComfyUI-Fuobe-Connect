@@ -17,6 +17,6 @@ try:
 
     install()
 except Exception as e:  # never stop ComfyUI from starting
-    logging.warning("[Fuobe Connect] Couldn't start: %s", e)
+    logging.warning("[Fuobe Connect] Couldn't start: %s", str(e).encode("ascii", "backslashreplace").decode("ascii"))
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

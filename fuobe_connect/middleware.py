@@ -16,13 +16,12 @@ is 127.0.0.1, ::1 or localhost) for a path a Fuobe run needs (origins.allowed). 
   in your input folder (Studios.answer).
 
 Any other request from a trusted studio (another path, another Host, a preflight a run never sends) is turned away
-here, so a studio never reaches ComfyUI unchecked, whatever ComfyUI's start options say. Every other request goes on
-untouched, so ComfyUI's own check still turns away every other website.
+here, whatever ComfyUI's start options say. Every other request goes on untouched, to ComfyUI's own check.
 
-When ComfyUI was started with --enable-cors-header (which switches its own check off), the middleware also does what
-Fuobe's guard does: a request from any other web page gets in only when the page is ComfyUI's own or the origin the
-setting names. A trusted studio still gets only the checked paths above, even when the setting names it. With
-"--enable-cors-header *" (every site, the person's choice) it adds no check for other websites.
+When ComfyUI was started with --enable-cors-header and a site's address, the middleware also does what Fuobe's guard
+does: a request from any other web page gets in only when the page is ComfyUI's own or the origin the setting names. A
+trusted studio still gets only the checked paths above, even when the setting names it. "--enable-cors-header *" (every
+site) is the person's own choice, and other websites get in as that setting says.
 
 Pure aiohttp: the tests load it with ComfyUI's own middleware and nothing else.
 """
@@ -30,13 +29,13 @@ Pure aiohttp: the tests load it with ComfyUI's own middleware and nothing else.
 from __future__ import annotations
 
 import json
-import logging
 from collections import OrderedDict
 from typing import Callable, Iterable
 
 from aiohttp import web
 
 from .graph import CLIENT_ID, FILE_LOADERS, UUID, fuobe_prefixed, files_in, staged_name_ok, vet_graph
+from .logs import get_log
 from .origins import allowed, host_name, is_loopback, normalise, same_host
 
 ALLOW_METHODS = "GET, POST, OPTIONS"
@@ -46,13 +45,15 @@ MARKER = "X-Fuobe-Connect-Studio"
 ALLOW_HEADERS = {"content-type"}
 MAX_AGE = "600"
 
+log = get_log()
+
 _told: set[str] = set()
 
 
 def _note(why: str) -> None:
     if why not in _told and len(_told) < 50:
         _told.add(why)
-        logging.warning("[Fuobe Connect] Turned away a request from %s", why)
+        log.warning("[Fuobe Connect] Turned away a request from %s", why)
 
 
 def _cors_headers(origin: str) -> dict[str, str]:
@@ -119,8 +120,7 @@ class Studios:
 
     def __init__(self, nodes: Callable[[], Iterable[str]] | None = None, held: Callable[[str], bool] | None = None):
         """`held(prompt_id)`: ComfyUI already has a prompt with this id, in its queue or its history (comfy_held, inside
-        ComfyUI). ComfyUI takes any new prompt under an id it already holds, so a studio that learned the id of a
-        prompt of yours (from the live socket) could otherwise claim it."""
+        ComfyUI). A studio's prompt under such an id is refused."""
         self.nodes = nodes or (lambda: frozenset())
         self.held = held
         self.prompts: OrderedDict[str, None] = OrderedDict()
@@ -209,7 +209,7 @@ class Studios:
             try:
                 taken = bool(self.held(pid))
             except Exception:
-                logging.exception("[Fuobe Connect] Couldn't read ComfyUI's queue and history")
+                log.exception("[Fuobe Connect] Couldn't read ComfyUI's queue and history")
                 return _refuse("Fuobe Connect couldn't check this prompt's id against ComfyUI's queue. Update Fuobe Connect in ComfyUI-Manager, then retry.", 503)
             if taken:
                 _note("a trusted studio: it sent the id of a prompt that ComfyUI already holds")
@@ -361,13 +361,13 @@ def make_middleware(trusted: Callable[[], Iterable[str]], cors_flag: str | None 
     flag_origin = normalise(flag) if flag and flag != "*" else None
     guard_on = bool(flag) and flag != "*"
     if guard_on and flag_origin is None:
-        logging.warning("[Fuobe Connect] --enable-cors-header %r isn't a website's address (like http://localhost:3000), so only ComfyUI's own page and the trusted studios get in.", flag[:80])
+        log.warning("[Fuobe Connect] --enable-cors-header %r isn't a website's address (like http://localhost:3000), so only ComfyUI's own page and the trusted studios get in.", flag[:80])
     try:
         named = flag_origin is not None and flag_origin in set(trusted())
     except Exception:
         named = False
     if named:
-        logging.warning(
+        log.warning(
             "[Fuobe Connect] --enable-cors-header %s isn't needed for that studio: Fuobe Connect lets it use this ComfyUI on this computer (at a network address too with FUOBE_CONNECT_LAN=1), with its checks. The setting gives it nothing more.",
             flag_origin,
         )
@@ -400,8 +400,8 @@ def make_middleware(trusted: Callable[[], Iterable[str]], cors_flag: str | None 
                             response.headers.update(_cors_headers(origin))
                         return response
                 # Anything else a trusted studio asks for (another path, a preflight a run never sends, or this ComfyUI
-                # under another name or a network address) never reaches ComfyUI unchecked, even when
-                # --enable-cors-header names that studio and ComfyUI's own check is off.
+                # under another name or a network address) is turned away here, also when --enable-cors-header names
+                # that studio.
                 return web.Response(status=403)
             if guard_on and (origin is None or origin != flag_origin) and not same_host(raw, host):
                 _note(raw[:120])

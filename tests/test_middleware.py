@@ -28,7 +28,7 @@ from fuobe_connect.origins import allowed, normalise, parse_list, same_host, stu
 PORT = int(os.environ.get("FUOBE_CONNECT_TEST_PORT", "3360"))
 BASE = f"http://127.0.0.1:{PORT}"
 FUOBE = "https://fuobe.com"
-EVIL = "https://evil.example"
+OTHER = "https://other.example"
 NODES = frozenset({"CheckpointLoaderSimple", "CLIPTextEncode", "KSampler", "VAEDecode", "SaveImage", "LoadImage", "EmptyLatentImage", "PreviewImage"})
 
 
@@ -164,7 +164,7 @@ class OriginsTest(unittest.TestCase):
             self.assertFalse(allowed(m, p, q), p)
 
     def test_model_lists_only(self):
-        # A model folder's list, yes; ComfyUI's lists of every node pack's files and of its configs, no.
+        # A model folder's list, yes; custom_nodes and configs, no.
         for p in ["/models", "/models/loras", "/api/models/checkpoints", "/experiment/models", "/experiment/models/loras", "/models/custom_nodes_extra"]:
             self.assertTrue(allowed("GET", p), p)
         for p in ["/models/custom_nodes", "/api/models/custom_nodes", "/models/configs", "/experiment/models/custom_nodes", "/api/experiment/models/configs"]:
@@ -256,10 +256,10 @@ class DirectModeTest(unittest.TestCase):
             app, _ = with_connect()
             async with Server(app) as s:
                 refused = {
-                    "a node this pack doesn't ship": graph(**{"10": {"class_type": "Image Load", "inputs": {"image_path": "C:/Users/me/secret.png"}}}),
+                    "a node this pack doesn't ship": graph(**{"10": {"class_type": "Image Load", "inputs": {"image_path": "C:/Users/me/photo.png"}}}),
                     "an absolute path": graph(**{"10": {"class_type": "SaveImage", "inputs": {"filename_prefix": "/etc/cron.d/x", "images": ["8", 0]}}}),
                     "a Windows path": graph(**{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "C:\\Users\\me\\x.png", "clip": ["4", 1]}}}),
-                    "a share with forward slashes": graph(**{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "//attacker.example/share/x", "clip": ["4", 1]}}}),
+                    "a share with forward slashes": graph(**{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "//other.example/share/x", "clip": ["4", 1]}}}),
                     "a device path": graph(**{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "//?/C:/Users/Public/x", "clip": ["4", 1]}}}),
                     "the drive's root": graph(**{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "\\Users\\Public\\x", "clip": ["4", 1]}}}),
                     "a drive with no slash": graph(**{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "D:Users\\x", "clip": ["4", 1]}}}),
@@ -390,9 +390,9 @@ class DirectModeTest(unittest.TestCase):
 
         run(go())
 
-    def test_prompt_id_of_yours_cant_be_taken(self):
-        """ComfyUI takes a new prompt under any id, one it already holds too. A studio that learned the id of a prompt of
-        yours (ComfyUI sends the progress of a prompt queued without a client id to every socket) can't make it its own."""
+    def test_refuses_a_prompt_id_comfyui_already_holds(self):
+        """A studio's prompt under an id that ComfyUI already holds (in its queue or its history) is refused, and the
+        prompt stays yours."""
 
         async def go():
             comfy = Comfy()
@@ -550,7 +550,7 @@ class DirectModeTest(unittest.TestCase):
                 self.assertEqual(status, 403)
                 self.assertNotIn("Access-Control-Allow-Origin", h)
                 # Another website's preflight: refused by ComfyUI, as before.
-                status, h, _ = await s.req("OPTIONS", "/prompt", browser(EVIL, **{"Access-Control-Request-Method": "POST", "Access-Control-Request-Private-Network": "true"}))
+                status, h, _ = await s.req("OPTIONS", "/prompt", browser(OTHER, **{"Access-Control-Request-Method": "POST", "Access-Control-Request-Private-Network": "true"}))
                 self.assertEqual(status, 403)
                 self.assertNotIn("Access-Control-Allow-Private-Network", h)
 
@@ -560,13 +560,13 @@ class DirectModeTest(unittest.TestCase):
         async def go():
             app, _ = with_connect()
             async with Server(app) as s:
-                for origin in [EVIL, "https://fuobe.com.evil.example", "http://fuobe.com", "https://fuobe.com:444", "null"]:
+                for origin in [OTHER, "https://fuobe.com.other.example", "http://fuobe.com", "https://fuobe.com:444", "null"]:
                     for method, path in [("GET", "/system_stats"), ("POST", "/prompt")]:
                         status, h, _ = await s.req(method, path, browser(origin), data=b"{}" if method == "POST" else None)
                         self.assertEqual(status, 403, f"{origin} {method} {path}")
                         self.assertNotIn("Access-Control-Allow-Origin", h)
                 # Without Sec-Fetch-Site (an older browser): ComfyUI's host check still refuses it.
-                status, _, _ = await s.req("POST", "/prompt", {"Origin": EVIL}, data=b"{}")
+                status, _, _ = await s.req("POST", "/prompt", {"Origin": OTHER}, data=b"{}")
                 self.assertEqual(status, 403)
 
         run(go())
@@ -605,7 +605,7 @@ class DirectModeTest(unittest.TestCase):
             app, _ = with_connect()
             async with Server(app) as s:
                 for method, path in [("GET", "/userdata/comfy.settings.json"), ("POST", "/v2/manager/queue/install"), ("POST", "/fuobe/connect/studios"), ("GET", "/view?filename=a.png&subfolder=&type=input"), ("GET", "/view?filename=a.png%20[input]&subfolder=&type=output")]:
-                    status, h, _ = await s.req(method, path, browser(FUOBE, **{"Content-Type": "application/json"}), data=b'{"studios":"https://evil.example"}' if method == "POST" else None)
+                    status, h, _ = await s.req(method, path, browser(FUOBE, **{"Content-Type": "application/json"}), data=b'{"studios":"https://other.example"}' if method == "POST" else None)
                     self.assertEqual(status, 403, path)
                     self.assertNotIn("Access-Control-Allow-Origin", h)
                 status, h, _ = await s.req("OPTIONS", "/v2/manager/queue/install", browser(FUOBE, **{"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}))
@@ -633,8 +633,8 @@ class DirectModeTest(unittest.TestCase):
                 async with s.session.ws_connect(f"ws://127.0.0.1:{PORT}/ws?clientId=fuobe-abc12345", headers=browser(FUOBE, **{"Sec-Fetch-Mode": "websocket"})) as ws:
                     msg = await ws.receive(timeout=5)
                     self.assertIn("status", msg.data)
-                # Your own ComfyUI tab's socket can't be taken over.
-                for origin, cid in [(FUOBE, "abc12345"), (EVIL, "fuobe-abc12345")]:
+                # The live socket only under a Fuobe client id, never your own ComfyUI tab's.
+                for origin, cid in [(FUOBE, "abc12345"), (OTHER, "fuobe-abc12345")]:
                     with self.assertRaises(aiohttp.WSServerHandshakeError) as e:
                         async with s.session.ws_connect(f"ws://127.0.0.1:{PORT}/ws?clientId={cid}", headers=browser(origin, **{"Sec-Fetch-Mode": "websocket"})):
                             pass
@@ -649,7 +649,7 @@ class DirectModeTest(unittest.TestCase):
                 status, h, body = await s.req("GET", "/fuobe/guard", browser(FUOBE))
                 self.assertEqual((status, h.get("Access-Control-Allow-Origin")), (200, FUOBE))
                 self.assertIn(b'"guard": 1', body)
-                status, _, _ = await s.req("GET", "/fuobe/guard", browser(EVIL))
+                status, _, _ = await s.req("GET", "/fuobe/guard", browser(OTHER))
                 self.assertEqual(status, 403)
 
         run(go())
@@ -664,7 +664,7 @@ class DirectModeTest(unittest.TestCase):
                 self.assertIn(b'"connect": 1', body)
                 status, _, body = await s.req("GET", "/fuobe/connect")
                 self.assertIn(b"studios", body)
-                # A program can't pass itself off as a studio to get less, or more: the marker is dropped on the way in.
+                # The marker is dropped from every incoming request: only Fuobe Connect sets it.
                 status, _, body = await s.req("GET", "/fuobe/connect", {MARKER: FUOBE})
                 self.assertIn(b"studios", body)
                 # Only ComfyUI's own page changes the studios.
@@ -675,7 +675,7 @@ class DirectModeTest(unittest.TestCase):
 
 
 class WithCorsFlagTest(unittest.TestCase):
-    """ComfyUI started with --enable-cors-header: its own check is off, so Fuobe Connect does what Fuobe's guard did."""
+    """ComfyUI started with --enable-cors-header and a site's address: Fuobe Connect does what Fuobe's guard did."""
 
     def test_guard(self):
         async def go():
@@ -683,7 +683,7 @@ class WithCorsFlagTest(unittest.TestCase):
             async with Server(app) as s:
                 status, h, _ = await s.req("GET", "/system_stats", browser(FUOBE))
                 self.assertEqual((status, h.get("Access-Control-Allow-Origin")), (200, FUOBE))
-                status, _, _ = await s.req("POST", "/prompt", browser(EVIL), data=b"{}")
+                status, _, _ = await s.req("POST", "/prompt", browser(OTHER), data=b"{}")
                 self.assertEqual(status, 403)
                 status, _, _ = await s.req("POST", "/prompt", browser("https://other-studio.example"), data=b"{}")
                 self.assertEqual(status, 200)
@@ -698,9 +698,8 @@ class WithCorsFlagTest(unittest.TestCase):
         run(go())
 
     def test_flag_naming_a_studio_gives_it_nothing_more(self):
-        """--enable-cors-header <a trusted studio> switches ComfyUI's own check off for that site. The studio still gets
-        only the checked paths, and only at this computer's own address (or a network address with FUOBE_CONNECT_LAN=1),
-        never under a name that points at this computer."""
+        """--enable-cors-header <a trusted studio>: the studio still gets only the checked paths, and only at this
+        computer's own address (or a network address with FUOBE_CONNECT_LAN=1), never under another name."""
 
         def form(name, kind):
             f = aiohttp.FormData()
@@ -754,7 +753,7 @@ class WithCorsFlagTest(unittest.TestCase):
         async def go():
             app, _ = with_connect(cors_flag="localhost:8080")
             async with Server(app) as s:
-                for origin in ["null", EVIL]:
+                for origin in ["null", OTHER]:
                     status, _, _ = await s.req("POST", "/prompt", {"Origin": origin, "Content-Type": "text/plain"}, data=b"{}")
                     self.assertEqual(status, 403, origin)
                 status, _, _ = await s.req("POST", "/prompt", {"Origin": BASE}, data=b"{}")
@@ -766,7 +765,7 @@ class WithCorsFlagTest(unittest.TestCase):
         async def go():
             app, _ = with_connect(cors_flag="*")
             async with Server(app) as s:
-                status, _, _ = await s.req("POST", "/prompt", browser(EVIL), data=b"{}")
+                status, _, _ = await s.req("POST", "/prompt", browser(OTHER), data=b"{}")
                 self.assertEqual(status, 200)
 
         run(go())

@@ -8,13 +8,14 @@ inherited entries), set before the token is written.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import threading
 
+from .logs import get_log
+
 FILE_NAME = "fuobe-connect.json"
 
-log = logging.getLogger("fuobe_connect")
+log = get_log()
 
 
 def _current_user_sid() -> str | None:

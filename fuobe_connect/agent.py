@@ -16,7 +16,6 @@ the studio's settings ends it too.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 import socket
@@ -28,11 +27,12 @@ from urllib.parse import urlsplit
 import aiohttp
 
 from .graph import NodeList
+from .logs import get_log
 from .net import Comfy, Site, site_base
 from .runner import Runner, Unpaired
 from .store import Store
 
-log = logging.getLogger("fuobe_connect")
+log = get_log()
 
 CODE = re.compile(r"^[A-Z0-9]{2,8}(?:-[A-Z0-9]{2,8})?\Z")
 NAME = re.compile(r"^[^\x00-\x1f\x7f]{1,48}\Z")

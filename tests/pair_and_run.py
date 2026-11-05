@@ -4,7 +4,7 @@ line, waits for the approval, then runs that person's jobs on the ComfyUI at --c
 
 It prints the worker token only when FUOBE_CONNECT_TEST_PRINT_TOKEN=1 (the end-to-end test needs it, with a throwaway
 studio); otherwise only its last four characters. A token to start with comes from FUOBE_CONNECT_TOKEN, never from the
-command line (where other programs on this computer could read it). Not part of the published pack.
+command line. Not part of the published pack.
 
     python tests/pair_and_run.py --site http://127.0.0.1:3361 --comfy http://127.0.0.1:3362
 """

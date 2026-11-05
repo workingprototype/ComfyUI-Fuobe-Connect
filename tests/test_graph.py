@@ -89,14 +89,14 @@ class NamesTest(unittest.TestCase):
             self.assertTrue(staged_name_ok(ok), ok)
         for bad in ["my_photo.png", "fuobe_short.png", "fuobe_abcdefgh12.html", "fuobe_abcdefgh12.svg", "fuobe_abcdefgh12.py", "fuobe_abcdefgh12.js", "fuobe_abcdefgh12.png [output]", "../fuobe_abcdefgh12.png", None, 3]:
             self.assertFalse(staged_name_ok(bad), bad)
-        # A settings file, or a file of no known type, that a node could read as one (ffmpeg's format file is a .json).
+        # A settings file, or a file of no known type: never one of a run's inputs.
         for bad in ["fuobe_abcdefgh12.json", "fuobe_abcdefgh12.txt", "fuobe_abcdefgh12.csv", "fuobe_abcdefgh12.bin", "fuobe_abcdefgh12.octet"]:
             self.assertFalse(staged_name_ok(bad), bad)
 
 
 class VetTest(unittest.TestCase):
     def test_unknown_node(self):
-        self.assertEqual(vet_graph(g(node("KJ_RunPython", code="import os")), NODES, STAGED), "unknown-node")
+        self.assertEqual(vet_graph(g(node("SomePackNode", text="x")), NODES, STAGED), "unknown-node")
         self.assertEqual(vet_graph(g({"inputs": {}}), NODES, STAGED), "unknown-node")
         self.assertEqual(vet_graph({}, NODES, STAGED), "unsafe-graph")
         self.assertEqual(vet_graph("x", NODES, STAGED), "unsafe-graph")
@@ -106,15 +106,15 @@ class VetTest(unittest.TestCase):
             "C:/Users/me/Pictures",
             "C:" + B + "Users" + B + "me",
             B + B + "server" + B + "share",
-            "/etc/passwd",
-            "/secret.png",
+            "/home/me/notes.txt",
+            "/photo.png",
             "/",
-            "../../secret.png",
+            "../../photo.png",
             "fuobe/" + ".." + "/x",
-            "~/.ssh/id_rsa",
-            "http://192.168.1.1/admin",
+            "~/notes.txt",
+            "http://192.168.1.1/x.png",
             "https://example.com/x.png",
-            "file:///etc/passwd",
+            "file:///home/me/x.png",
             "blake3:0123456789abcdef",
             "ComfyUI_00001_.png [output]",
             "preview.png [temp]",
@@ -129,11 +129,11 @@ class VetTest(unittest.TestCase):
         """Every way Windows, Linux and macOS read a text as a place outside a node's own folder."""
         for v in [
             "//?/C:/Users/Public/x.srt",  # a Win32 device path with forward slashes
-            "//attacker.example/share/x.srt",  # a network share with forward slashes
+            "//other.example/share/x.srt",  # a network share with forward slashes
             B + B + "?" + B + "C:" + B + "x",  # \\?\C:\x
             B + B + "." + B + "PhysicalDrive0",  # \\.\PhysicalDrive0
             B + "Users" + B + "Public" + B + "x.srt",  # \Users\...: the root of ComfyUI's drive
-            B + "/attacker.example/share/x.srt",  # \/host/share: a share too
+            B + "/other.example/share/x.srt",  # \/host/share: a share too
             "D:Users" + B + "x.srt",  # a drive with no slash: that drive's own working folder
             "C:x.srt",
             "C:",
@@ -149,7 +149,7 @@ class VetTest(unittest.TestCase):
             "${HOME}$USER/x",
             # What a node that trims its text sees.
             " C:/Users/me",
-            "\t/etc/passwd",
+            "\t/home/me",
             "\u3000" + B + "Users",
             '"C:/Users/me"',
             "'//host/share'",
@@ -188,9 +188,9 @@ class VetTest(unittest.TestCase):
         path check when the person added them to their own list."""
         risky = [
             node("LoadImagesFromFolderKJ", folder="C:/Users/me/Pictures"),
-            node("LoadImageFromUrl", url="http://192.168.1.1/admin"),
+            node("LoadImageFromUrl", url="http://192.168.1.1/x.png"),
             node("Image Load", image_path="C:/ProgramData/x.png"),
-            node("Image Saver", path="C:/ProgramData/Microsoft/Windows/Start Menu", images=["1", 0]),
+            node("Image Saver", path="C:/Users/Public/Pictures", images=["1", 0]),
         ]
         for n in risky:
             self.assertEqual(vet_graph(g(n), frozenset({"SaveImage"}), STAGED), "unknown-node", n)
@@ -205,7 +205,7 @@ class VetTest(unittest.TestCase):
             node("LoadImage", image=["2", 0]),  # a name another node works out
             node("VHS_LoadVideo", video="clip.mp4"),
             node("Load3D", model_file="3d/scene.spz"),
-            node("Load3D", model_file="fuobe_abcdefgh34.spz", image={"image": "secret.png", "camera_info": {}}),
+            node("Load3D", model_file="fuobe_abcdefgh34.spz", image={"image": "photo.png", "camera_info": {}}),
         ]:
             self.assertEqual(vet_graph(g(bad, node("PrimitiveString", value="x")), NODES, STAGED), "unsafe-graph", bad)
         self.assertIsNone(vet_graph(g(node("Load3D", model_file="fuobe_abcdefgh34.spz", image={"image": "fuobe_abcdefgh12.png", "mask": "", "camera_info": {"position": {"x": 1, "y": 2, "z": 3}, "zoom": 1}})), NODES, STAGED))
@@ -281,9 +281,9 @@ class NodeRulesTest(unittest.TestCase):
             self.assertIsNone(vet1("AILab_Qwen3ASRSubtitle", output_path=ok, audio=["9", 0]), ok)
         for bad in [
             "//?/C:/Users/Public/x.srt",
-            "//attacker.example/share/x.srt",
+            "//other.example/share/x.srt",
             B + "Users" + B + "Public" + B + "x.srt",
-            B + "/attacker.example/share/x.srt",
+            B + "/other.example/share/x.srt",
             "D:Users" + B + "x.srt",
             "C:/Users/Public/x.srt",
             "captions",  # anywhere in your output folder
@@ -364,7 +364,8 @@ class NodeRulesTest(unittest.TestCase):
             self.assertEqual(vet1("Hi3DLoadMesh", mesh_file=bad), "unsafe-graph", bad)
 
     def test_json_objects(self):
-        """ComfyUI passes an object the graph writes to a node unchecked (a LoRA list, a model path, a {"__value__"})."""
+        """A value the graph writes is never a JSON object (a LoRA list, a model path, a {"__value__"}), except a 3D
+        view's entries."""
         for bad in [
             node("WanVideoModelLoader", extra_model={"path": "models/x.safetensors"}),
             node("WanVideoModelLoader", lora={"__value__": [{"path": "loras/x.safetensors", "strength": 1}]}),
@@ -383,10 +384,10 @@ class NodeRulesTest(unittest.TestCase):
         self.assertEqual(vet_graph(g(node("StringConcatenate", string_a="<svg", string_b="></svg>", delimiter=""), node("TS_SVGStringToSVGBytesIO", SVG_String=["1", 0])), SHIPPED, STAGED), "unsafe-graph")
 
     def test_format_reads_no_attribute(self):
-        """Python's format reaches a module's globals through an object: "{a.__init__.__globals__[os].environ}"."""
+        """StringFormat takes only plain replacement fields, never one that reads an attribute or an item."""
         for ok in ["Dress {a} in image 1 in {b}. Keep the rest.", '{{"width": {a}, "height": {b}, "coords": "relative-1000"}}', "{a:.2f} and {b!r}", "{{a.b}}"]:
             self.assertIsNone(vet1("StringFormat", f_string=ok), ok)
-        for bad in ["{a.__init__.__globals__[os].environ}", "{a[0]}", "x {b.real}", "{{{a.x}}}", "{a:{b.__class__}}", ["2", 0]]:
+        for bad in ["{a.__class__}", "{a[0]}", "x {b.real}", "{{{a.x}}}", "{a:{b.__class__}}", ["2", 0]]:
             self.assertEqual(vet1("StringFormat", f_string=bad), "unsafe-path", bad)
 
 
@@ -401,7 +402,7 @@ _DYNAMIC = ("COMFY_AUTOGROW_V3", "COMFY_DYNAMICCOMBO_V3")
 def recorded_kinds(info_file: str) -> NodeKinds:
     """NodeKinds from a recorded /object_info. A v3 node's dynamic input ("images", "mode") stands for the inputs
     ComfyUI works out under its name ("images.image_1", "mode.yaw"); inside ComfyUI, comfy_kinds asks ComfyUI's own
-    get_finalized_class_inputs (test_comfy_engine.py runs that). Start Loop and End Loop are ComfyUI 0.42's loops."""
+    get_finalized_class_inputs (test_comfy_kinds.py runs that). Start Loop and End Loop are ComfyUI 0.42's loops."""
     with open(info_file, encoding="utf-8") as f:
         info = {k: v for k, v in json.load(f).items() if isinstance(v, dict)}
 
@@ -493,8 +494,7 @@ WITH_OWN = SHIPPED | {"MyAnyNode", "MyOptions"}
 
 
 class LinkTest(unittest.TestCase):
-    """ComfyUI doesn't type-check a link from an "any", match-typed or dropdown-typed output, and checks a dropdown's
-    value against its list only when the graph writes it. Such links, and links into a dropdown, feed only what Fuobe's
+    """A link from an "any", match-typed or dropdown-typed output, and a link into a dropdown, feeds only what Fuobe's
     own graphs feed that way."""
 
     def test_shipped_list(self):
@@ -510,19 +510,19 @@ class LinkTest(unittest.TestCase):
         self.assertEqual(input_kind("images.image12"), "images.image#")
         self.assertEqual(input_kind("audio2"), "audio#")
 
-    def test_any_link_into_a_dropdown(self):
-        """CreateList or VRAM_Debug ("*") hands a dropdown any text: a model name it then downloads, or a file name."""
-        evil = "attacker/evil-repo"
+    def test_refuses_a_loose_link_into_a_dropdown(self):
+        """Refuses a text passed on by CreateList, GetItemFromList or VRAM_Debug ("*") into a dropdown or a text input."""
+        text = "someone/other-model"
         for kinds in (None, KINDS):
-            through_list = chain(node("CreateList", input1=evil), node("GetItemFromList", list=["1", 0], index=0), node("DownloadAndLoadWav2VecModel", model=["2", 0], base_precision="fp16", load_device="main_device"))
+            through_list = chain(node("CreateList", input1=text), node("GetItemFromList", list=["1", 0], index=0), node("DownloadAndLoadWav2VecModel", model=["2", 0], base_precision="fp16", load_device="main_device"))
             self.assertIsNotNone(vet_graph(through_list, SHIPPED, STAGED, kinds))
-            through_debug = chain(node("PrimitiveStringMultiline", value=evil), node("VRAM_Debug", any_input=["1", 0]), node("DownloadAndLoadWav2VecModel", model=["2", 0]))
+            through_debug = chain(node("PrimitiveStringMultiline", value=text), node("VRAM_Debug", any_input=["1", 0]), node("DownloadAndLoadWav2VecModel", model=["2", 0]))
             self.assertIsNotNone(vet_graph(through_debug, SHIPPED, STAGED, kinds))
             # A dropdown that no rule here names: the link itself is refused.
             for src in (node("GetItemFromList", list=["9", 0], index=0), node("VRAM_Debug", any_input=["9", 0]), node("ComfySwitchNode", switch=True, on_true=["9", 0], on_false=["9", 0])):
                 self.assertEqual(vet_graph(chain(src, node("LoraLoader", model=["8", 0], clip=["8", 1], lora_name=["1", 0])), SHIPPED, STAGED, kinds), "unsafe-graph", src)
                 self.assertEqual(vet_graph(chain(src, node("Apply Whisper", audio=["8", 0], model=["1", 0])), SHIPPED, STAGED, kinds), "unsafe-graph", src)
-                # Into any input Fuobe's graphs don't feed that way: the text would reach it unchecked.
+                # Into any other input that Fuobe's graphs don't feed that way: refused too.
                 self.assertEqual(vet_graph(chain(src, node("CLIPTextEncode", text=["1", 0], clip=["8", 0])), SHIPPED, STAGED, kinds), "unsafe-graph", src)
 
     def test_links_fuobe_graphs_make(self):
@@ -536,10 +536,9 @@ class LinkTest(unittest.TestCase):
             # The bit depth into another dropdown: no.
             self.assertEqual(vet_graph(chain(node("GetVideoComponents", video=["9", 0]), node("Apply Whisper", audio=["9", 0], model=["1", 3])), SHIPPED, STAGED, kinds), "unsafe-graph")
 
-    def test_every_link_comfyui_reads(self):
-        """ComfyUI reads [node, false] as output 0, [node, true] as output 1 and [node, -1] as the last output, and
-        takes a number with a point as a link too. Each one is a link here, and each one is refused: a value worked out
-        by a loose output would otherwise reach a dropdown or ffmpeg's arguments as if no link were there."""
+    def test_refuses_a_link_slot_that_isnt_a_whole_number(self):
+        """Every value that ComfyUI's is_link takes as a link is a link here too. Only a whole number from 0 passes as
+        its output: [node, false], [node, true], [node, -1] and a number with a point are refused."""
         comfy = comfy_is_link()
         for v in (["1", 0], ["1", 3], ["1", False], ["1", True], ["1", 0.0], ["1", -1], ["1", 2.5], ["1", "0"], [1, 0], ["1"], ["1", 0, 0], ("1", 0), "1"):
             self.assertEqual(is_link(v), comfy(v), v)
@@ -568,15 +567,15 @@ class LinkTest(unittest.TestCase):
     def test_lists_inside_a_value_are_read(self):
         """ComfyUI reads a link only as an input's whole value. A list inside a value is never a link, so its texts are
         read like any other."""
-        for inner in (["//host/share/x", 0], ["C:" + B + "Users" + B + "x", False], ["/etc/passwd", 0.0]):
+        for inner in (["//host/share/x", 0], ["C:" + B + "Users" + B + "x", False], ["/home/me", 0.0]):
             self.assertEqual(vet1("CLIPTextEncode", text="a red door", clip=[inner, 0]), "unsafe-path", inner)
             self.assertEqual(vet1("CLIPTextEncode", text=["x", [inner]], clip=["8", 0]), "unsafe-path", inner)
         # A link's own node id isn't text a node reads.
         self.assertIsNone(vet1("CLIPTextEncode", text="a red door", clip=["8", 0]))
 
     def test_node_kinds_inside_comfyui(self):
-        """Inside ComfyUI the node classes say more: any node's untyped outputs (your own listed nodes' too), and
-        every dropdown, which a typed link may not feed either when a node skips ComfyUI's type check."""
+        """Inside ComfyUI the node classes say more: any node's loosely typed outputs (your own listed nodes' too), and
+        every dropdown, which takes only the links that Fuobe's own graphs make."""
         own_any = chain(node("MyAnyNode", value="x"), node("CLIPTextEncode", text=["1", 0], clip=["8", 0]))
         self.assertIsNone(vet_graph(own_any, WITH_OWN, STAGED))  # not on the shipped list of untyped outputs
         self.assertEqual(vet_graph(own_any, WITH_OWN, STAGED, KINDS), "unsafe-graph")
@@ -614,19 +613,18 @@ class LinkTest(unittest.TestCase):
         self.assertIsNone(vet_graph(chain(encode, node("KSampler", model=["8", 0], positive=["1", 0], sampler_name="euler")), SHIPPED, STAGED, kinds))
         self.assertEqual(vet_graph(chain(node("PrimitiveAny", value="x"), node("KSampler", model=["8", 0], positive=["1", 0])), SHIPPED | {"PrimitiveAny"}, STAGED, kinds), "unsafe-graph")
 
-    def test_ffmpeg_format_file(self):
-        """VHS_VideoCombine opens video_formats/<format>.json with the name as given and hands what it reads to ffmpeg:
-        a format worked out at run time could name a .json in the input folder."""
+    def test_video_format_is_a_written_name(self):
+        """VHS_VideoCombine's format is a plain name the graph writes (video/h264-mp4): never a link, never a folder."""
         for staged in (None, ["fuobe_abcdefgh12.json"]):
             for kinds in (None, KINDS):
                 replaced = chain(
-                    node("StringReplace", string="video/@@" + B + "@@" + B + "@@" + B + "input" + B + "fuobe_abcdefgh12", find="@", replace="."),
+                    node("StringReplace", string="video/h264-mp4", find="2", replace="5"),
                     node("GetItemFromList", list=["1", 0], index=0),
                     node("VHS_VideoCombine", images=["9", 0], format=["2", 0], frame_rate=24, filename_prefix="fuobe/x"),
                 )
                 self.assertIsNotNone(vet_graph(replaced, SHIPPED, staged, kinds))
                 switched = chain(
-                    node("PrimitiveStringMultiline", value="video/C:" + B + "ComfyUI" + B + "input" + B + "fuobe_abcdefgh12"),
+                    node("PrimitiveStringMultiline", value="video/h264-mp4"),
                     node("ComfySwitchNode", switch=True, on_true=["1", 0], on_false=["1", 0]),
                     node("VHS_VideoCombine", images=["9", 0], format=["2", 0], frame_rate=24, filename_prefix="fuobe/x"),
                 )
@@ -637,10 +635,10 @@ class LinkTest(unittest.TestCase):
             self.assertEqual(vet1("VHS_VideoCombine", images=["9", 0], format=bad, frame_rate=24, filename_prefix="fuobe/x"), "unsafe-path", bad)
 
     def test_ffmpeg_settings_are_plain_words(self):
-        """The format's settings go into ffmpeg's arguments, the GIF dither into a filter (where "movie=" reads a file)."""
+        """VHS_VideoCombine's other settings are each one plain word that the graph writes."""
         base = {"images": ["9", 0], "format": "video/h264-mp4", "frame_rate": 24, "filename_prefix": "fuobe/x"}
         self.assertIsNone(vet1("VHS_VideoCombine", **base, pix_fmt="yuv420p", crf=19, save_metadata=True, profile="hq", dither="sierra2_4a", audio=["8", 0]))
-        for bad in ["none[x];movie=secret.png[y];[x][y]overlay", "sierra2_4a:diff_mode=rectangle", "yuv420p -i x", "a,b"]:
+        for bad in ["a;b", "a[b]", "a=b", "a:b", "a b", "a,b"]:
             self.assertEqual(vet1("VHS_VideoCombine", **{**base, "format": "video/ffmpeg-gif"}, dither=bad), "unsafe-path", bad)
         # A link only into the pictures, the sound, the batch, the VAE and the frame rate.
         made = chain(node("StringConcatenate", string_a="none", string_b="x", delimiter=","), node("VHS_VideoCombine", **{**base, "format": "video/ffmpeg-gif"}, dither=["1", 0]))
@@ -649,14 +647,14 @@ class LinkTest(unittest.TestCase):
         self.assertEqual(vet_graph(prefix, SHIPPED, STAGED), "unsafe-graph")
 
     def test_download_names(self):
-        """Nodes that download what their dropdown names, or load a pickle by name: only the names on their lists."""
+        """Nodes that download what their dropdown names, or load a model file by name: only the names on their lists."""
         for ok in ["TencentGameMate/chinese-wav2vec2-base", "facebook/wav2vec2-base-960h"]:
             self.assertIsNone(vet1("DownloadAndLoadWav2VecModel", model=ok, base_precision="fp16"), ok)
-        for bad in ["attacker/evil-repo", "facebook/wav2vec2-base-960h-evil", "TencentGameMate/chinese-wav2vec2-base/../x", ["2", 0]]:
+        for bad in ["someone/other-model", "facebook/wav2vec2-base-960h-other", "TencentGameMate/chinese-wav2vec2-base/../x", ["2", 0]]:
             self.assertEqual(vet1("DownloadAndLoadWav2VecModel", model=bad), "unsafe-path", bad)
         for ok in ["rife47.pth", "rife49.pth", "rife417.pth", "rife426.pth", "sudo_rife4_269.662_testV1_scale1.pth"]:
             self.assertIsNone(vet1("RIFE VFI", ckpt_name=ok, frames=["9", 0]), ok)
-        for bad in ["rife50.pth", "x/rife49.pth", "rife49.pth.evil", ["2", 0]]:
+        for bad in ["rife50.pth", "x/rife49.pth", "rife49.pth.bak", ["2", 0]]:
             self.assertEqual(vet1("RIFE VFI", ckpt_name=bad), "unsafe-path", bad)
         for ok in ["face_yolov8m.pt", "bbox" + B + "face_yolov8m.pt", "segm/person_yolov8m-seg.pt"]:
             self.assertIsNone(vet1("H3FaceTrackCrop", detector=ok), ok)
@@ -697,8 +695,8 @@ FUOBE_CAMERA = {
     "frustum": {"left": -5, "right": 5, "top": 5, "bottom": -5},
 }
 FUOBE_VIEW = {"image": "", "mask": "", "normal": "", "camera_info": FUOBE_CAMERA, "recording": "", "model_3d_info": []}
-# A file in your output folder whose name ComfyUI makes up the same way on every computer.
-ECHOED_FILE = {"filename": "ComfyUI_00001_.png", "subfolder": "", "type": "output"}
+# A file in your output folder, under ComfyUI's default name.
+OUTPUT_FILE = {"filename": "ComfyUI_00001_.png", "subfolder": "", "type": "output"}
 
 
 def save3d(view, **more) -> dict:
@@ -718,14 +716,14 @@ class SpecNode(FakeNode):
 
 
 class AllNames(dict):
-    """A node pack's optional inputs that say they hold every name (VHS_VideoCombine's): get_input_info finds any name
-    there, but validate_inputs goes through only the names the dict holds."""
+    """A node pack's optional inputs that say they hold every name (VHS_VideoCombine's): only the names the dict holds
+    count as listed."""
 
     def __contains__(self, key):
         return True
 
 
-ENGINE = {
+SPEC_CLASSES = {
     "SaveImage": SpecNode({"required": {"images": ("IMAGE",), "filename_prefix": ("STRING", {})}, "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"}}, (), True),
     "CLIPLoader": SpecNode({"required": {"clip_name": (["a.safetensors"],), "type": (["sd3"],)}, "optional": {"device": (["default", "cpu"], {})}}, ("CLIP",)),
     "EmptyImage": SpecNode({"required": {"width": ("INT", {}), "height": ("INT", {}), "batch_size": ("INT", {}), "color": ("INT", {})}}, ("IMAGE",)),
@@ -738,7 +736,7 @@ ENGINE = {
 
 
 class FakeReplacements:
-    """ComfyUI's NodeReplaceManager, with the old node types it swaps."""
+    """ComfyUI's NodeReplaceManager, with the old node types it has replacements for."""
 
     def __init__(self, old: set):
         self.old = old
@@ -774,22 +772,21 @@ LOOPS = {
 }
 
 
-class ComfyOwnRulesTest(unittest.TestCase):
-    """What ComfyUI's own validate and execute code does with a graph, which the per-input rules above don't see: a value
-    it turns into a link, inputs it runs from but never validates, keys it reads as its own state, a node type it swaps
-    after the check, nodes a loop runs unvalidated, and data it shows in the history beside the files.
-    test_comfy_engine.py runs each attack against ComfyUI's own code."""
+class GraphShapeTest(unittest.TestCase):
+    """Rules on a graph's shape beyond each input's own rule: no "__value__" object, no written list or JSON object, a
+    node's keys, a 3D view's form, a run's files in its history, links only into listed inputs, node replacements and
+    loops."""
 
-    def test_value_wrapper_becomes_a_link(self):
-        """validate_inputs takes x out of {"__value__": x} in place: a link inside one runs a node it never validated."""
-        attack = g(
+    def test_refuses_a_value_object(self):
+        """Refuses a graph with a {"__value__": ...} object: at any depth, in any input, or as an input's name."""
+        graph = g(
             save3d({"__value__": ["3", 0]}),
             load3d({"image": "", "mask": "", "normal": "", "recording": ""}),
-            node("CLIPLoader", clip_name="not-in-the-list/anything.safetensors", type="no_such_type", device="nowhere"),
+            node("CLIPLoader", clip_name="a.safetensors", type="sd3", device="default"),
         )
         for staged in (None, ["fuobe_abcdefgh34.spz"]):
             for kinds in (None, KINDS):
-                self.assertEqual(vet_graph(attack, SHIPPED, staged, kinds), "unsafe-graph")
+                self.assertEqual(vet_graph(graph, SHIPPED, staged, kinds), "unsafe-graph")
         # At any depth, in any input, as a key of the inputs themselves.
         for wrapped in (
             {"camera_info": {"__value__": ["3", 0]}},
@@ -805,8 +802,8 @@ class ComfyOwnRulesTest(unittest.TestCase):
         self.assertFalse(has_value_key({"a": [{"b": "__value__"}], "__values__": 1}))
 
     def test_lists_and_numbers(self):
-        """ComfyUI reads a list as a link, so a list a node gets as written could only come through an input ComfyUI
-        never validates (VHS_VideoCombine takes any name). NaN passes every min and max."""
+        """A value the graph writes is never a list (a link is [node, output]), and a number is never NaN or
+        infinity."""
         for bad in (["a", "b", "c"], [], ["x"], [1, 0], [["3", 0]], ["3", 0, 0], [["3", 0], 0]):
             self.assertEqual(vet1("CLIPTextEncode", text=bad, clip=["8", 0]), "unsafe-graph", bad)
         video = {"images": ["9", 0], "format": "video/h264-mp4", "frame_rate": 24, "filename_prefix": "fuobe/x"}
@@ -816,9 +813,8 @@ class ComfyOwnRulesTest(unittest.TestCase):
         for ok in (7, 7.5, -1, True, None, "x"):
             self.assertIsNone(vet1("KSampler", model=["8", 0], cfg=ok), ok)
 
-    def test_node_keys_comfyui_reads(self):
-        """A node holds class_type, inputs and its title. "is_changed" stands in for IS_CHANGED (the cache key of a
-        node's output); Start Loop reads "_loop_body" and "_loop_end"."""
+    def test_node_keys(self):
+        """A node holds only class_type, inputs and its title (_meta): refuses a node with any other key."""
         save = node("SaveImage", images=["1", 0], filename_prefix="fuobe/x")
         empty = node("EmptyImage", width=8, height=8, batch_size=1, color=0)
         for ok in ({**save, "_meta": {"title": "Save Image"}}, {**save, "_meta": {"title": "x", "cnr_id": "comfy-core", "ver": "0.3.1"}}, {**save, "_meta": {}}):
@@ -836,8 +832,7 @@ class ComfyOwnRulesTest(unittest.TestCase):
             self.assertEqual(vet_graph(chain(empty, bad), SHIPPED, STAGED), "unsafe-graph", bad)
 
     def test_3d_views_have_comfyuis_own_form(self):
-        """The camera and the models' placements: numbers under ComfyUI's own names, nothing else. Save3DAdvanced shows
-        both in the run's history, where a camera that named a file read as one of the run's results."""
+        """The camera and the models' placements: numbers under ComfyUI's own names, nothing else."""
         self.assertIsNone(vet1("Save3DAdvanced", viewport_state=FUOBE_VIEW))
         self.assertIsNone(vet1("Save3DAdvanced", viewport_state={}))
         self.assertIsNone(vet1("Save3DAdvanced", viewport_state={**FUOBE_VIEW, "camera_info": None}))
@@ -848,11 +843,11 @@ class ComfyOwnRulesTest(unittest.TestCase):
         self.assertIsNone(vet1("Load3D", model_file="fuobe_abcdefgh34.spz", image=any_angle))
         self.assertIsNone(vet1("Load3D", model_file="fuobe_abcdefgh34.spz", image={**any_angle, "camera_info": FUOBE_CAMERA, "model_3d_info": placed}))
         for camera in (
-            ECHOED_FILE,
-            {**FUOBE_CAMERA, **ECHOED_FILE},
+            OUTPUT_FILE,
+            {**FUOBE_CAMERA, **OUTPUT_FILE},
             {**FUOBE_CAMERA, "position": {"x": "10", "y": 10, "z": 10}},
             {**FUOBE_CAMERA, "position": {"x": 1, "y": 2, "z": 3, "w": 4}},
-            {**FUOBE_CAMERA, "position": ECHOED_FILE},
+            {**FUOBE_CAMERA, "position": OUTPUT_FILE},
             {**FUOBE_CAMERA, "cameraType": "fisheye"},
             {**FUOBE_CAMERA, "zoom": True},
             {**FUOBE_CAMERA, "zoom": float("nan")},
@@ -864,13 +859,13 @@ class ComfyOwnRulesTest(unittest.TestCase):
         ):
             for view in ({**FUOBE_VIEW, "camera_info": camera}, {**any_angle, "camera_info": camera}):
                 self.assertEqual(vet_graph(g(save3d(view) if "mask" in view and view["mask"] == "" else load3d(view)), SHIPPED, STAGED + ["fuobe_abcdefgh34.spz"]), "unsafe-graph", camera)
-        for placements in ([ECHOED_FILE], [{**placed[0], "filename": "x.png"}], [{"position": {"x": 1}, "name": "chair"}], [[0, 1, 0]], ["x"], {}, "x", [{"scale": {"x": 1, "y": 1, "z": 1, "w": 1}}], placed * 65):
+        for placements in ([OUTPUT_FILE], [{**placed[0], "filename": "x.png"}], [{"position": {"x": 1}, "name": "chair"}], [[0, 1, 0]], ["x"], {}, "x", [{"scale": {"x": 1, "y": 1, "z": 1, "w": 1}}], placed * 65):
             self.assertEqual(vet1("Save3DAdvanced", viewport_state={**FUOBE_VIEW, "model_3d_info": placements}), "unsafe-graph", placements)
             self.assertEqual(vet1("Load3D", model_file="fuobe_abcdefgh34.spz", image={**any_angle, "model_3d_info": placements}), "unsafe-graph", placements)
         # Save3DAdvanced reads no picture entry; Load3D's are texts (each one of this run's files, checked as such).
         for view in ({**FUOBE_VIEW, "image": "fuobe_abcdefgh12.png"}, {**FUOBE_VIEW, "recording": None}, {**FUOBE_VIEW, "files": []}, {**FUOBE_VIEW, "camera": {}}):
             self.assertEqual(vet1("Save3DAdvanced", viewport_state=view), "unsafe-graph", view)
-        for view in ({**any_angle, "image": 5}, {**any_angle, "image": None}, {**any_angle, "image": {"image": "fuobe_abcdefgh12.png"}}, {**any_angle, "extra": ""}, {**any_angle, "image": "secret.png"}):
+        for view in ({**any_angle, "image": 5}, {**any_angle, "image": None}, {**any_angle, "image": {"image": "fuobe_abcdefgh12.png"}}, {**any_angle, "extra": ""}, {**any_angle, "image": "photo.png"}):
             self.assertEqual(vet1("Load3D", model_file="fuobe_abcdefgh34.spz", image=view), "unsafe-graph", view)
 
     def test_history_data_is_never_a_file(self):
@@ -879,32 +874,32 @@ class ComfyOwnRulesTest(unittest.TestCase):
             "outputs": {
                 "7": {
                     "3d": [{"filename": "abcdef12_00001_.glb", "subfolder": "fuobe", "type": "output"}],
-                    "camera_info": [ECHOED_FILE],
-                    "model_3d_info": [{**ECHOED_FILE, "filename": "secret.png"}],
+                    "camera_info": [OUTPUT_FILE],
+                    "model_3d_info": [{**OUTPUT_FILE, "filename": "photo.png"}],
                 }
             }
         }
         self.assertEqual([f["filename"] for f in files_in([entry])], ["abcdef12_00001_.glb"])
-        self.assertFalse(may_download(ECHOED_FILE, [entry]))
+        self.assertFalse(may_download(OUTPUT_FILE, [entry]))
         self.assertTrue(may_download({"filename": "abcdef12_00001_.glb", "subfolder": "fuobe", "type": "output"}, [entry]))
 
-    def test_links_only_into_inputs_comfyui_validates(self):
-        """ComfyUI's scheduler follows a link in any input; validate_inputs goes through only the required and optional
-        ones. A link anywhere else runs a node that nothing validated (its dropdowns, its numbers, its own links)."""
-        kinds = comfy_kinds(lambda: ENGINE)
-        loader = node("CLIPLoader", clip_name="not-in-the-list.safetensors", type="no_such_type")
+    def test_links_only_into_listed_inputs(self):
+        """A link goes only into an input the node lists as required or optional: refuses a link into any other input
+        name, and any value in a hidden input."""
+        kinds = comfy_kinds(lambda: SPEC_CLASSES)
+        loader = node("CLIPLoader", clip_name="a.safetensors", type="sd3")
         empty = node("EmptyImage", width=8, height=8, batch_size=1, color=0)
         for extra in ({"zzz": ["1", 0]}, {"prompt": ["1", 0]}, {"extra_pnginfo": ["1", 0]}):
-            attack = chain(loader, empty, node("SaveImage", images=["2", 0], filename_prefix="fuobe/x", **extra))
-            self.assertEqual(vet_graph(attack, SHIPPED, STAGED, kinds), "unsafe-graph", extra)
-            # Without the node classes this can't be seen; inside ComfyUI they are always there.
-            self.assertIsNone(vet_graph(attack, SHIPPED, STAGED), extra)
-        # A hidden input as written goes to the node unchecked.
+            graph = chain(loader, empty, node("SaveImage", images=["2", 0], filename_prefix="fuobe/x", **extra))
+            self.assertEqual(vet_graph(graph, SHIPPED, STAGED, kinds), "unsafe-graph", extra)
+            # Without the node classes the inputs aren't known; inside ComfyUI they are always there.
+            self.assertIsNone(vet_graph(graph, SHIPPED, STAGED), extra)
+        # A hidden input's name with a written value: refused too.
         self.assertEqual(vet_graph(chain(empty, node("SaveImage", images=["1", 0], filename_prefix="fuobe/x", prompt="x")), SHIPPED, STAGED, kinds), "unsafe-graph")
         # A text in an input the node doesn't list is dropped by ComfyUI: fine. Links into listed inputs: fine.
         self.assertIsNone(vet_graph(chain(empty, node("SaveImage", images=["1", 0], filename_prefix="fuobe/x", note="hi")), SHIPPED, STAGED, kinds))
         self.assertIsNone(vet_graph(chain(node("CLIPLoader", clip_name="a.safetensors", type="sd3", device=["9", 0]), empty), SHIPPED, STAGED, kinds))
-        # A pack's inputs that claim every name: validate_inputs still goes through only its own.
+        # A pack's inputs that claim every name: only the names its dict holds count.
         video = {"images": ["1", 0], "format": "video/h264-mp4", "frame_rate": 24, "filename_prefix": "fuobe/x"}
         self.assertIsNone(vet_graph(chain(empty, node("VHS_VideoCombine", **video, audio=["1", 0])), SHIPPED, STAGED, kinds))
         self.assertEqual(vet_graph(chain(empty, node("VHS_VideoCombine", **video, vae=["1", 0])), SHIPPED, STAGED, kinds), "unsafe-graph")
@@ -913,7 +908,7 @@ class ComfyOwnRulesTest(unittest.TestCase):
         batch = lambda **i: chain(node("EmptyImage", width=8, height=8, batch_size=1, color=0), node("BatchImagesNode", **i), node("SaveImage", images=["2", 0], filename_prefix="fuobe/x"))  # noqa: E731
         self.assertIsNone(vet_graph(batch(**{"images.image0": ["1", 0], "images.image1": ["1", 0]}), SHIPPED, STAGED, dyn))
         self.assertEqual(vet_graph(batch(**{"images.image0": ["1", 0], "pictures.image1": ["1", 0]}), SHIPPED, STAGED, dyn), "unsafe-graph")
-        # A class that can't say what it validates: refused (ComfyUI can't validate it either).
+        # A class that can't say what it takes: refused.
         broken = NodeKinds(lambda cls: (_ for _ in ()).throw(RuntimeError("no")))
         self.assertEqual(vet_graph(chain(empty), SHIPPED, STAGED, broken), "unsafe-graph")
         failing = NodeKinds(lambda cls: ({"required": {}}, ()), lambda cls, inputs: (_ for _ in ()).throw(RuntimeError("no")))
@@ -921,37 +916,36 @@ class ComfyOwnRulesTest(unittest.TestCase):
         failing_dyn = NodeKinds(lambda cls: ({"required": {}}, (), {"dynamic": True}), lambda cls, inputs: (_ for _ in ()).throw(RuntimeError("no")))
         self.assertEqual(vet_graph(chain(empty), SHIPPED, STAGED, failing_dyn), "unsafe-graph")
 
-    def test_node_types_comfyui_swaps(self):
-        """ComfyUI swaps a missing node type for another (its node replacements) after this check, with other inputs."""
+    def test_refuses_a_node_type_with_a_replacement(self):
+        """Refuses a missing node type that ComfyUI has a node replacement for."""
         graph = chain(node("EmptyImage", width=8, height=8, batch_size=1, color=0), node("OldLoader", path="photo.png"), node("SaveImage", images=["2", 0], filename_prefix="fuobe/x"))
         allowed = SHIPPED | {"OldLoader"}
-        swaps = comfy_kinds(lambda: ENGINE, lambda: FakeReplacements({"OldLoader"}))
+        swaps = comfy_kinds(lambda: SPEC_CLASSES, lambda: FakeReplacements({"OldLoader"}))
         self.assertEqual(vet_graph(graph, allowed, STAGED, swaps), "unknown-node")
-        # A missing node type ComfyUI doesn't swap: ComfyUI refuses the whole graph itself (before it validates or runs
-        # any node), and says which type is missing.
-        self.assertIsNone(vet_graph(graph, allowed, STAGED, comfy_kinds(lambda: ENGINE, lambda: FakeReplacements(set()))))
-        self.assertIsNone(vet_graph(graph, allowed, STAGED, comfy_kinds(lambda: ENGINE, lambda: None)))
+        # A missing node type with no replacement: ComfyUI refuses the graph itself and says which type is missing.
+        self.assertIsNone(vet_graph(graph, allowed, STAGED, comfy_kinds(lambda: SPEC_CLASSES, lambda: FakeReplacements(set()))))
+        self.assertIsNone(vet_graph(graph, allowed, STAGED, comfy_kinds(lambda: SPEC_CLASSES, lambda: None)))
         unlisted = {**graph, "3": node("SaveImage", images=["1", 0], filename_prefix="fuobe/x", zzz=["2", 0])}
-        self.assertIsNone(vet_graph(unlisted, allowed, STAGED, comfy_kinds(lambda: ENGINE, lambda: None)))
-        self.assertEqual(vet_graph({k: v for k, v in unlisted.items() if k != "2"}, allowed, STAGED, comfy_kinds(lambda: ENGINE, lambda: None)), "unsafe-graph")
+        self.assertIsNone(vet_graph(unlisted, allowed, STAGED, comfy_kinds(lambda: SPEC_CLASSES, lambda: None)))
+        self.assertEqual(vet_graph({k: v for k, v in unlisted.items() if k != "2"}, allowed, STAGED, comfy_kinds(lambda: SPEC_CLASSES, lambda: None)), "unsafe-graph")
         # When the replacements can't be read: refused.
-        self.assertEqual(vet_graph(graph, allowed, STAGED, comfy_kinds(lambda: ENGINE, lambda: (_ for _ in ()).throw(RuntimeError("no")))), "unknown-node")
+        self.assertEqual(vet_graph(graph, allowed, STAGED, comfy_kinds(lambda: SPEC_CLASSES, lambda: (_ for _ in ()).throw(RuntimeError("no")))), "unknown-node")
 
-    def test_loops_validate_every_node(self):
-        """validate_loops pairs an End Loop downstream of an output with its Start Loop, and Start Loop's expansion runs
-        the body and the End Loop: nodes validate_inputs never reached. A graph with a loop has only validated nodes."""
+    def test_loops_reach_every_node_from_an_output(self):
+        """In a graph with a loop (Start Loop, End Loop), every node is reached from an output node through links:
+        refuses one that isn't."""
         kinds = spec_kinds(LOOPS)
         start = node("StartLoop", mode="simple", **{"mode.num_iterations": 2}, cache_iterations=False)
         model = load3d({"image": "", "mask": "", "normal": "", "recording": ""})
-        # 1 Start Loop -> 2 Save3DAdvanced (an output, with outputs) -> 4 End Loop; 1 -> 3 (never validated) -> 4.
-        attack = {
+        # 1 Start Loop -> 2 Save3DAdvanced (an output, with outputs) -> 4 End Loop; 1 -> 3 -> 4, which no output needs.
+        graph = {
             "1": start,
             "2": node("Save3DAdvanced", model_3d=["5", 6], viewport_state={}, width=["1", 0], height=512, filename_prefix="fuobe/abcdef12"),
             "3": node("PrimitiveInt", value=["1", 0]),
             "4": node("EndLoop", accumulate=False, **{"terminations.termination0": ["2", 3]}, next_iteration_value=["3", 0]),
             "5": model,
         }
-        self.assertEqual(vet_graph(attack, SHIPPED, ["fuobe_abcdefgh34.spz"], kinds), "unsafe-graph")
+        self.assertEqual(vet_graph(graph, SHIPPED, ["fuobe_abcdefgh34.spz"], kinds), "unsafe-graph")
         # Fuobe's form: everything feeds the output.
         ok = {
             "1": start,
@@ -961,7 +955,7 @@ class ComfyOwnRulesTest(unittest.TestCase):
             "5": node("SaveImage", images=["4", 0], filename_prefix="fuobe/x"),
         }
         self.assertIsNone(vet_graph(ok, SHIPPED, STAGED, kinds))
-        # A node no output needs: ComfyUI never runs it in a graph without a loop; with one, refused.
+        # A node no output needs: fine in a graph without a loop; with one, refused.
         spare = node("PrimitiveInt", value=5)
         self.assertIsNone(vet_graph(chain(node("EmptyImage", width=8, height=8, batch_size=1, color=0), node("SaveImage", images=["1", 0], filename_prefix="fuobe/x"), spare), SHIPPED, STAGED, kinds))
         self.assertEqual(vet_graph({**ok, "6": spare}, SHIPPED, STAGED, kinds), "unsafe-graph")

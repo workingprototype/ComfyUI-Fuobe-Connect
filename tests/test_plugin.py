@@ -88,8 +88,8 @@ class FakeAgent:
 
 
 class OwnPageTest(unittest.TestCase):
-    """Only ComfyUI's own page (or a program here) changes the studios, pairs, or pauses: never a page whose own name
-    was pointed at this computer, a page on another port, or another website."""
+    """Only ComfyUI's own page (or a program here) changes the studios, pairs, or pauses: never a page under another
+    host name, a page on another port, or another website."""
 
     def setUp(self):
         self.env = mock.patch.dict(os.environ, {}, clear=False)
@@ -129,27 +129,27 @@ class OwnPageTest(unittest.TestCase):
 
         asyncio.run(go())
 
-    def test_rebinding_and_other_pages(self):
+    def test_refuses_requests_from_other_pages(self):
         async def test(req):
             own = {"Origin": PAGE, "Sec-Fetch-Site": "same-origin"}
             status, body = await req("GET", "/fuobe/connect", own)
             self.assertIn("studios", body)
-            # A page at attacker.example whose name now points at 127.0.0.1: same Origin and Host, still not ComfyUI's page.
-            rebound = {"Host": f"attacker.example:{PAGE_PORT}", "Origin": f"http://attacker.example:{PAGE_PORT}", "Sec-Fetch-Site": "same-origin"}
-            status, body = await req("GET", "/fuobe/connect", rebound)
+            # A page at other.example on ComfyUI's port: its Origin and Host agree, but the name isn't one of ComfyUI's own.
+            other_name = {"Host": f"other.example:{PAGE_PORT}", "Origin": f"http://other.example:{PAGE_PORT}", "Sec-Fetch-Site": "same-origin"}
+            status, body = await req("GET", "/fuobe/connect", other_name)
             self.assertNotIn("studios", body)
-            for path, b in [("/fuobe/connect/studios", {"studios": "https://attacker.example"}), ("/fuobe/connect/pair", {"site": "https://attacker.example"}), ("/fuobe/connect/jobs", {"paused": False})]:
-                status, _ = await req("POST", path, rebound, b)
+            for path, b in [("/fuobe/connect/studios", {"studios": "https://other.example"}), ("/fuobe/connect/pair", {"site": "https://other.example"}), ("/fuobe/connect/jobs", {"paused": False})]:
+                status, _ = await req("POST", path, other_name, b)
                 self.assertEqual(status, 403, path)
             # A page on port 80 of this computer, another website, a form post: not ComfyUI's page either.
             for headers in [
                 {"Origin": "http://127.0.0.1", "Host": f"127.0.0.1:{PAGE_PORT}"},
-                {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+                {"Origin": "https://other.example", "Sec-Fetch-Site": "cross-site"},
                 {"Origin": PAGE, "Sec-Fetch-Site": "cross-site"},
             ]:
-                status, _ = await req("POST", "/fuobe/connect/studios", headers, {"studios": "https://evil.example"})
+                status, _ = await req("POST", "/fuobe/connect/studios", headers, {"studios": "https://other.example"})
                 self.assertEqual(status, 403, headers)
-            status, _ = await req("POST", "/fuobe/connect/studios", {"Origin": PAGE, "Content-Type": "text/plain"}, raw=b'{"studios":"https://evil.example"}')
+            status, _ = await req("POST", "/fuobe/connect/studios", {"Origin": PAGE, "Content-Type": "text/plain"}, raw=b'{"studios":"https://other.example"}')
             self.assertEqual(status, 403)
             self.assertNotIn("studios", plugin._state["store"].data)
             # A name the person lists is ComfyUI's own page.
@@ -179,7 +179,7 @@ class OwnPageTest(unittest.TestCase):
     def test_pairs_only_with_a_trusted_studio(self):
         async def test(req):
             own = {"Origin": PAGE, "Sec-Fetch-Site": "same-origin"}
-            for site in ["https://attacker.example", "http://fuobe.com", "javascript:alert(1)"]:
+            for site in ["https://other.example", "http://fuobe.com", "javascript:alert(1)"]:
                 status, _ = await req("POST", "/fuobe/connect/pair", own, {"site": site})
                 self.assertEqual(status, 400, site)
             status, _ = await req("POST", "/fuobe/connect/pair", own, {"name": "Studio PC"})
@@ -216,7 +216,7 @@ class FakeStudio:
         self.polls += 1
         if self.polls < 2:
             return web.json_response({"state": "waiting"})
-        return web.json_response({"state": "approved", "token": "fuobe_wkr_" + "T" * 43, "workerId": "w1", "name": self.name, "account": "a***@example.com"})
+        return web.json_response({"state": "approved", "token": "fuobe_wkr_" + "T" * 43, "workerId": "w1", "name": self.name, "account": "a\u2022\u2022\u2022@example.com"})
 
     async def beat(self, request):
         self.calls.append(f"beat:{request.headers.get('Authorization', '')[:20]}")
@@ -281,6 +281,17 @@ class PluginTest(unittest.TestCase):
 
     def test_loads_into_comfyui_and_pairs(self):
         user_dir = self.user_dir
+        # On Japanese Windows, ComfyUI's log written to a file or a pipe takes only cp932.
+        log_out = io.TextIOWrapper(io.BytesIO(), encoding="cp932", errors="strict", write_through=True)
+        handler = logging.StreamHandler(log_out)
+        failed = []
+        handler.handleError = lambda record: failed.append(sys.exc_info()[1])
+        root = logging.getLogger()
+        level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        self.addCleanup(root.setLevel, level)
+        self.addCleanup(root.removeHandler, handler)
         module, instance = load_pack(user_dir)
         agent_module = sys.modules["fuobe_connect_pack.fuobe_connect.agent"]
         agent_module.REVOKE_RETRY_S = 0.3
@@ -341,8 +352,10 @@ class PluginTest(unittest.TestCase):
                             break
                         await asyncio.sleep(0.3)
                     self.assertEqual(st["paired"]["site"], SITE)
-                    # The account that approved it, as the studio names it.
-                    self.assertEqual(st["paired"]["account"], "a***@example.com")
+                    # The account that approved it, as the studio names it; the log writes it in ASCII.
+                    self.assertEqual(st["paired"]["account"], "a\u2022\u2022\u2022@example.com")
+                    self.assertEqual(failed, [])
+                    self.assertIn("as a***@example.com.", log_out.buffer.getvalue().decode("cp932"))
                     self.assertTrue(any(c.startswith("beat:Bearer fuobe_wkr_") for c in studio.calls), studio.calls)
                     with open(file, encoding="utf-8") as f:
                         saved = json.load(f)

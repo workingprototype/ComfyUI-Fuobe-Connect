@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import re
 import time
@@ -41,9 +40,10 @@ from .graph import (
     staged_name_ok,
     vet_graph,
 )
+from .logs import get_log
 from .net import Comfy, Site, TooBig, seg
 
-log = logging.getLogger("fuobe_connect")
+log = get_log()
 
 BEAT_S = 10
 BUSY_BEAT_S = 5

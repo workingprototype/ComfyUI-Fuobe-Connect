@@ -1,8 +1,8 @@
 """The two places Fuobe Connect talks to: the paired Fuobe studio (over HTTPS, with its token) and this ComfyUI itself
 (on this computer, as a program: no browser headers, so ComfyUI's own checks treat it as it treats any local tool).
 
-Every answer from the studio is read with a size limit, and files go through a temporary file, so a broken or taken-over
-studio can't fill ComfyUI's memory. Only aiohttp, which ComfyUI already has.
+Every answer from the studio is read with a size limit, and files go through a temporary file, so ComfyUI's memory use
+stays small. Only aiohttp, which ComfyUI already has.
 """
 
 from __future__ import annotations

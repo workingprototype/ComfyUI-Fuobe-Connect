@@ -8,7 +8,6 @@ files changes.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 import sys
@@ -17,10 +16,11 @@ from aiohttp import web
 
 from . import __version__
 from .graph import NodeList, comfy_kinds
+from .logs import get_log
 from .middleware import MARKER, Studios, comfy_held, make_middleware
 from .origins import DEFAULT_STUDIOS, NONE, host_name, is_ip, is_loopback, normalise, parse_list, same_host, says_none, studio, trusted_origins, with_twins
 
-log = logging.getLogger("fuobe_connect")
+log = get_log()
 
 _state: dict = {}
 
@@ -49,9 +49,9 @@ def own_hosts() -> set[str]:
 def _own_page(request: web.Request, post: bool = False) -> bool:
     """A call from ComfyUI's own page, or from a program on this computer: never from a trusted studio or any website.
 
-    The Host must be this computer (127.0.0.1, ::1, localhost), an IP address, or a name in FUOBE_CONNECT_HOSTS: a page
-    whose own name was pointed at this computer (DNS rebinding) has neither. The Origin, when there is one, is that
-    Host with the same port; the browser's Sec-Fetch-Site, when sent, says same-origin; a change is JSON."""
+    The Host must be this computer (127.0.0.1, ::1, localhost), an IP address, or a name in FUOBE_CONNECT_HOSTS. The
+    Origin, when there is one, is that Host with the same port; the browser's Sec-Fetch-Site, when sent, says
+    same-origin; a change is JSON."""
     if request.headers.get(MARKER):
         return False
     host = host_name(request.headers.get("Host"))

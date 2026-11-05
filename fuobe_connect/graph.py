@@ -9,43 +9,33 @@ A graph from a studio (a trusted page in direct mode, or the paired studio in pa
   one of ComfyUI's folder tags ("name [output]", "name [temp]"), or a JSON key that names a file, folder or address
   ("video_path": ...). The check looks at the text after its leading spaces and quotes, as a node that trims it sees it;
 - every input that a listed node reads as a file or a folder, or a name it downloads (PATH_INPUTS), holds a value the
-  graph writes itself, in the one form Fuobe's own graphs use. It never takes a link: another node could work out any
-  text;
+  graph writes itself, in the one form Fuobe's own graphs use, never a link;
 - every file loader reads one of the files Fuobe sent for the run (named fuobe_<id>.<ext>), never a file of yours and
   never a value that another node works out;
-- a link that ComfyUI doesn't type-check feeds only what Fuobe's own graphs feed that way (LOOSE_LINKS): a link from
-  an output typed "any", match-typed or dropdown-typed (LOOSE, and inside ComfyUI every such output of every node), and
-  any link into a dropdown. ComfyUI checks a dropdown's value against its list only when the graph writes it, so a
-  value another node works out would reach a dropdown, or any other input, unchecked;
+- a link from a loosely typed output (typed "any", match-typed or dropdown-typed: LOOSE, and inside ComfyUI every such
+  output of every node), and every link into a dropdown, goes only where Fuobe's own graphs put one (LOOSE_LINKS);
 - a node that puts its inputs into a program's arguments (ARG_NODES: VHS_VideoCombine and ffmpeg) takes a link only
   into its media inputs, and its other text only as one plain word;
-- a value the graph writes is one plain thing: a text, a number (never NaN or infinity), true, false or null. Never a
-  list: ComfyUI reads a list as a link. Never a JSON object: ComfyUI hands an object to a node unchecked, and some nodes
-  read a file's path from one. The one exception is a 3D view's entries (OBJECT_INPUTS), each in the exact form
-  ComfyUI's own 3D nodes use: numbers for the camera and the models' placements, nothing else;
-- no object anywhere holds a "__value__" key, at any depth: ComfyUI's validate_inputs takes the value out of
-  {"__value__": x} in place, so {"__value__": ["4", 0]} becomes a link to a node it never validated;
-- a node holds only "class_type", "inputs" and "_meta" (its title). ComfyUI reads other keys as its own state:
-  "is_changed" stands in for the node's IS_CHANGED, and Start Loop reads "_loop_body" and "_loop_end";
-- a link names its node's output with a whole number from 0 (["4", 0]). ComfyUI also takes true, false, a number with
-  a point (0.0) or -1 as an output. is_link here sees every link that ComfyUI sees, and a link in any of those forms
-  is refused;
+- a value the graph writes is one plain thing: a text, a number (never NaN or infinity), true, false or null, never a
+  list or a JSON object. The one exception is a 3D view's entries (OBJECT_INPUTS), each in the exact form ComfyUI's
+  own 3D nodes use: numbers for the camera and the models' placements, nothing else;
+- no object anywhere holds a "__value__" key, at any depth;
+- a node holds only "class_type", "inputs" and "_meta" (its title);
+- a link names its node's output with a whole number from 0 (["4", 0]), the form ComfyUI's page writes. is_link here
+  takes every value that ComfyUI takes as a link, and a link in any other form is refused;
 - a few inputs take only a link from one node type, or text of one shape (LINK_INPUTS, TEXT_INPUTS).
 
-Inside ComfyUI, where the node classes can say what they take (NodeKinds), also:
+Inside ComfyUI, where the node classes say what they take (NodeKinds), also:
 
-- a link goes only into an input that ComfyUI validates on that node: one the node lists as required or optional (a v3
-  node's dynamic inputs worked out from the node's own values, the way validate_inputs does it). ComfyUI runs a node
-  linked from any other input name but never validates it;
-- no input names one of the node's hidden inputs: ComfyUI hands some of those to the node as written, unchecked;
-- a node type that isn't installed but that ComfyUI would swap for another (its node replacements) is refused: the swap
-  happens after this check, with other inputs;
-- a graph with a loop (Start Loop, End Loop) has only nodes ComfyUI validates (each one reached from an output node):
-  the loop runs nodes downstream of an output, and its body, without validating them.
+- a link goes only into an input that the node lists as required or optional (for a v3 node, the dynamic inputs worked
+  out from the node's own values, as ComfyUI's validate_inputs works them out);
+- no input names one of the node's hidden inputs;
+- a node type that isn't installed but that ComfyUI has a node replacement for is refused;
+- in a graph with a loop (Start Loop, End Loop), every node is reached from an output node.
 
-A result is downloaded only when this run's own history lists it (never from what a 3D node echoes there as data: its
-camera and the models' placements). A model name the graph writes is checked by ComfyUI itself, against the files in
-your model folders.
+A result is downloaded only when this run's own history lists it as a file (never what a 3D node shows there as data:
+its camera and the models' placements). A model name the graph writes is checked by ComfyUI itself, against the files
+in your model folders.
 
 Pure, so the tests run it alone.
 """
@@ -61,7 +51,7 @@ import sys
 # The names Fuobe gives the files it sends (src/server/computer/tasks.ts stageInput).
 INPUT_NAME = re.compile(r"^fuobe_[A-Za-z0-9_-]{8,24}\.[a-z0-9]{1,5}$")
 # The file types a run sends: pictures, clips, sound, 3D scenes, arrays and subtitles. Never a page, a script, a
-# program, or a settings file (.json, .txt, .csv) or a file of no known type (.bin, .octet) that a node could read as one.
+# program, a settings file (.json, .txt, .csv) or a file of no known type (.bin, .octet).
 INPUT_EXTS = frozenset(
     "png jpg jpeg jpe webp gif bmp tif tiff avif heic heif jxl exr hdr "
     "mp4 m4v mov webm mkv avi mpg mpeg wmv flv 3gp quick "
@@ -103,7 +93,7 @@ OPTIONAL_FILES = {
 _FILEISH = re.compile(r"image|video|audio|file|path|directory", re.I)
 
 _PATHLIKE = [
-    re.compile(r"^[\\/]"),  # /etc/passwd, \Users\x, //host/share, //?/C:/x, \\host\share, \\?\C:\x, \/host/share
+    re.compile(r"^[\\/]"),  # /home/x, \Users\x, //host/share, //?/C:/x, \\host\share, \\?\C:\x, \/host/share
     re.compile(r"^[A-Za-z]:(?![ \t])"),  # C:\x, C:/x, and C:x or D:Users\x (a drive with no slash)
     re.compile(r"^~(?!\s)"),  # ~, ~/x, ~user/x
     # $HOME/x, %USERPROFILE%\x, %HOMEDRIVE%%HOMEPATH%\x
@@ -111,7 +101,7 @@ _PATHLIKE = [
     re.compile(r"(^|[\\/])\.\.([\\/]|\Z)"),  # a ".." step
     re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://"),  # a URL
     re.compile(r"^file:", re.I),
-    re.compile(r"^blake3:", re.I),  # ComfyUI's asset names reach any registered file
+    re.compile(r"^blake3:", re.I),  # ComfyUI's asset names
     re.compile(r"\x00"),
 ]
 # A key in JSON (or a Python dict) inside a text: "video_path": ..., 'output_folder': ...
@@ -167,20 +157,19 @@ PATH_INPUTS: dict[str, dict[str, re.Pattern]] = {
     "MiniMaxH3SourceTimeline": {"video_path": _NONE, "audio_path": _NONE},
     # The run's own folder under output/h3_chains: Fuobe's jobs are named fuobe_<id> (or come from the swap plan nodes).
     "MiniMaxH3ChainPlanModern": {"run_name": re.compile(r"fuobe_[A-Za-z0-9_-]{0,60}[A-Za-z0-9]")},
-    # A latent saved in output/open_h3_latents: only one a Fuobe draft saved (fuobe_h3_<id>_00001), never "(newest)",
-    # which would be whatever was saved last, yours too.
+    # A latent saved in output/open_h3_latents: only one a Fuobe draft saved (fuobe_h3_<id>_00001), never "(newest)".
     "OpenH3LoadRefinedLatent": {"latent_file": re.compile(r"fuobe_[A-Za-z0-9_-]{1,96}_\d{5}\.safetensors")},
-    # A SAM model in models/sams, else a path from ComfyUI's working folder (loaded with torch).
+    # A SAM model in models/sams.
     "QWMRefineMask": {"sam_model": re.compile(r"sam_vit_[bhl][A-Za-z0-9_.-]{0,64}\.pth")},
     # Writes every window's frames into this folder.
     "WanVideoImageToVideoMultiTalk": {"output_path": _NONE},
-    # ffmpeg's settings for the format: video_formats/<name>.json, opened with the name as given, so never a folder in it.
+    # The format's settings file, video_formats/<name>.json: a plain name, with no folder in it.
     "VHS_VideoCombine": {"format": re.compile(rf"image/(?:gif|webp)|video/{_NAME}")},
-    # Downloads the Hugging Face repo it names (into models/transformers/<name>) before it looks at the name.
+    # Downloads the Hugging Face repo it names (into models/transformers/<name>).
     "DownloadAndLoadWav2VecModel": {"model": re.compile(r"TencentGameMate/chinese-wav2vec2-base|facebook/wav2vec2-base-960h")},
     # Downloads the checkpoint it names.
     "RIFE VFI": {"ckpt_name": re.compile(r"rife47\.pth|rife49\.pth|rife417\.pth|rife426\.pth|sudo_rife4_269\.662_testV1_scale1\.pth")},
-    # A YOLO model in models/ultralytics (or its bbox and segm folders), loaded with pickle.
+    # A YOLO model in models/ultralytics (or its bbox and segm folders).
     "H3FaceTrackCrop": {"detector": re.compile(rf"(?:(?:bbox|segm)[\\/])?{_NAME}\.pt")},
     # A model folder, the adapter file and the text encoder (a folder, or a Hugging Face id it downloads).
     "ZenImage21AdapterLoader": {
@@ -199,8 +188,8 @@ LINK_INPUTS: dict[str, dict[str, frozenset]] = {
     "TS_SVGStringToSVGBytesIO": {"SVG_String": frozenset({"TS_ImageToSVGStringColor_Vtracer"})},
 }
 
-# A replacement field that reads an attribute or an item ("{a.__class__}", "{a[0]}"): Python's format can reach a
-# module's globals (os.environ) through a node's object.
+# A replacement field that reads an attribute or an item ("{a.__class__}", "{a[0]}"). StringFormat takes only plain
+# fields ("{a}", "{b:.2f}", "{a!r}").
 _FIELD_ACCESS = re.compile(r"(?<!\{)(?:\{\{)*\{[^{}!:]*[.\[]")
 
 # Text inputs that must have one shape (a value the graph writes; never a link).
@@ -211,10 +200,10 @@ TEXT_INPUTS: dict[str, dict] = {
 # ---------------------------------------------------------------------------
 # The objects a graph may write: a 3D view's entries
 #
-# ComfyUI hands an object to a node unchecked. Load3D reads its picture entries as files (checked in graph_problem) and
-# passes the camera and the models' placements on; Save3DAdvanced reads only those two and shows both in the run's
-# history (Saved3DModels). So each takes exactly the form of ComfyUI's own Load3DCamera.CameraInfo and
-# Load3DModelInfo.Model3DTransform (comfy_api/latest/_io.py): numbers, no other key.
+# Load3D reads its picture entries as files (checked in graph_problem) and passes the camera and the models' placements
+# on; Save3DAdvanced reads only those two and shows both in the run's history (Saved3DModels). Each takes exactly the
+# form of ComfyUI's own Load3DCamera.CameraInfo and Load3DModelInfo.Model3DTransform (comfy_api/latest/_io.py):
+# numbers, no other key.
 
 
 def _number(x) -> bool:
@@ -288,8 +277,7 @@ OBJECT_INPUTS = {
     ("Save3DAdvanced", "viewport_state"): lambda v: _view_ok(v, lambda x: x == ""),
 }
 
-# The keys a node may hold. ComfyUI reads others as its own state: "is_changed" stands in for the node's own IS_CHANGED
-# (execution.py IsChangedCache), and Start Loop reads "_loop_body" and "_loop_end" (comfy_extras/nodes_loop.py).
+# The keys a node may hold: its type, its inputs and its title.
 NODE_KEYS = frozenset({"class_type", "inputs", "_meta"})
 
 
@@ -302,8 +290,7 @@ def node_keys_ok(node: dict) -> bool:
 
 
 def has_value_key(v) -> bool:
-    """An object, at any depth, with a "__value__" key: ComfyUI's validate_inputs takes the value out of it in place, so
-    a list inside one becomes a link to a node it never validated."""
+    """An object, at any depth, with a "__value__" key."""
     stack = [v]
     while stack:
         x = stack.pop()
@@ -316,9 +303,9 @@ def has_value_key(v) -> bool:
     return False
 
 # Nodes that take inputs under any name and put the values into a program's arguments. VHS_VideoCombine hands its
-# format's settings to ffmpeg, one inside a filter (the GIF format's dither), and ComfyUI checks neither their type nor
-# their value. Such a node takes a link only into the inputs named here, and any other text only as one plain word
-# ("yuv420p", "hq", "sierra2_4a"), except the texts named here (a file name prefix: ComfyUI keeps the file in output).
+# format's settings to ffmpeg, one inside a filter (the GIF format's dither). Such a node takes a link only into the
+# inputs named here, and any other text only as one plain word ("yuv420p", "hq", "sierra2_4a"), except the texts named
+# here (a file name prefix: ComfyUI keeps the file in output).
 ARG_NODES: dict[str, dict[str, frozenset]] = {
     "VHS_VideoCombine": {"links": frozenset({"images", "audio", "meta_batch", "vae", "frame_rate"}), "texts": frozenset({"filename_prefix"})},
 }
@@ -326,14 +313,11 @@ _WORD = re.compile(r"[A-Za-z0-9_.-]{0,64}")
 
 
 # ---------------------------------------------------------------------------
-# Links ComfyUI doesn't check
+# Loosely typed links
 #
-# ComfyUI checks that a link's output type fits the input, but any type fits an output typed "any" ("*") or a
-# match-typed one, and a dropdown-typed output fits every dropdown. It checks a dropdown's value against its list only
-# when the graph writes the value, never for a link. So a value another node works out (a text, a list) would reach
-# any input through such a link: a dropdown of model names, or an input that takes a file's path inside an object.
-# Such links, and every link into a dropdown, may feed only what Fuobe's own graphs feed that way (generated with the
-# node list by Fuobe's scripts/connect-nodes.mjs).
+# An output typed "any" ("*") or match-typed fits any input, and a dropdown-typed output fits every dropdown. Links
+# from such outputs, and every link into a dropdown, may feed only what Fuobe's own graphs feed that way (generated with
+# the node list by Fuobe's scripts/connect-nodes.mjs).
 
 _LOOSE_TYPES = frozenset({"*", "COMFY_MATCHTYPE_V3", "COMBO"})
 _DROPDOWN_TYPES = frozenset({"COMBO", "COMFY_DYNAMICCOMBO_V3"})
@@ -351,7 +335,7 @@ def input_kind(key: str) -> str:
 
 
 _DATA = _shipped()
-# Node types on the shipped list whose outputs ComfyUI doesn't type-check, by output slot.
+# Node types on the shipped list with loosely typed outputs, by output slot.
 LOOSE: dict[str, frozenset] = {
     c: frozenset(s for s in slots if isinstance(s, int)) for c, slots in (_DATA.get("loose") or {}).items() if isinstance(c, str) and isinstance(slots, list)
 }
@@ -366,9 +350,9 @@ _NO_TYPE = "\x00FUOBE_CONNECT_NO_SUCH_TYPE"
 
 
 def loose_type(t) -> bool:
-    """An output type that ComfyUI matches to any input (validate_node_input): one that says it equals every other type
-    (`not t != other`: a node pack's own "any", ComfyUI's IO.ANY), "*", a match type, a dropdown, or a list of options.
-    ComfyUI's own IO types (IO.CONDITIONING, IO.IMAGE ...) are texts that compare by their names, like any text."""
+    """A loosely typed output: one that says it equals every other type (`not t != other`: a node pack's own "any",
+    ComfyUI's IO.ANY), "*", a match type, a dropdown, or a list of options. ComfyUI's own IO types (IO.CONDITIONING,
+    IO.IMAGE ...) are texts that compare by their names, like any text."""
     if isinstance(t, (list, tuple)):
         return True
     try:
@@ -377,7 +361,7 @@ def loose_type(t) -> bool:
     except Exception:
         return True
     if not isinstance(t, str):
-        return False  # ComfyUI matches a type that isn't text to no input
+        return False  # a type that isn't text fits no input
     return any(p.strip() in _LOOSE_TYPES for p in str.__str__(t).split(","))
 
 
@@ -388,8 +372,8 @@ def dropdown_spec(spec) -> bool:
 
 
 def _input_names(inputs) -> frozenset:
-    """The inputs ComfyUI's validate_inputs goes through on a node: its required and optional ones (only the names the
-    dicts hold: a node pack's dict that claims to hold every name still lists only its own)."""
+    """A node's required and optional inputs: only the names the dicts hold (a node pack's dict that says it holds every
+    name lists only its own)."""
     inputs = inputs if isinstance(inputs, dict) else {}
     return frozenset(inputs.get("required") or {}) | frozenset(inputs.get("optional") or {})
 
@@ -398,15 +382,15 @@ _MISSING = {"found": False}
 
 
 class NodeKinds:
-    """What the node classes themselves say, inside ComfyUI: which outputs ComfyUI doesn't type-check, which inputs are
-    dropdowns, which inputs ComfyUI validates, which are hidden, which nodes are outputs and which are loop boundaries.
-    It covers every node, your own listed ones too.
+    """What the node classes themselves say, inside ComfyUI: which outputs are loosely typed, which inputs are
+    dropdowns, which inputs a node lists, which are hidden, which nodes are outputs and which are loop boundaries. It
+    covers every node, your own listed ones too.
 
     `lookup(class_type)` gives (INPUT_TYPES(), RETURN_TYPES) or None (no such node type), optionally with a third item:
     {"output": OUTPUT_NODE, "loop": a loop boundary, "dynamic": a node whose inputs depend on its values}.
-    `checked(class_type, inputs)`: the input names ComfyUI validates on one node of a dynamic type, worked out the way
-    validate_inputs does it (else the names INPUT_TYPES lists). `replaced(class_type)`: ComfyUI would swap this missing
-    node type for another before validating (its node replacements).
+    `checked(class_type, inputs)`: the input names one node of a dynamic type lists, worked out the way validate_inputs
+    does it (else the names INPUT_TYPES lists). `replaced(class_type)`: ComfyUI has a node replacement for this missing
+    node type.
 
     A node's kinds are read once. A class that fails to say is asked again next time (ComfyUI refuses a graph with it
     anyway), and so is one that isn't there (a node pack could still load it)."""
@@ -466,7 +450,7 @@ class NodeKinds:
         return None if rec is None else rec["found"]
 
     def checked(self, cls: str, inputs: dict) -> frozenset | None:
-        """The input names ComfyUI validates on this node; None when that can't be known (the graph is refused)."""
+        """The input names this node lists; None when that can't be known (the graph is refused)."""
         rec = self._kinds(cls)
         if not rec or not rec["found"]:
             return None
@@ -491,7 +475,7 @@ class NodeKinds:
         return bool(rec and rec["found"] and rec["loop"])
 
     def replaced(self, cls: str) -> bool:
-        """ComfyUI would swap this node type for another before validating. When that can't be known: yes."""
+        """ComfyUI has a node replacement for this node type. When that can't be known: yes."""
         if self._replaced is None:
             return False
         try:
@@ -507,8 +491,8 @@ def _comfy_replacements():
 
 
 def comfy_kinds(mappings, replacements=None) -> NodeKinds:
-    """NodeKinds from ComfyUI's NODE_CLASS_MAPPINGS (a callable that returns it, read at each new node type), with the
-    inputs ComfyUI validates worked out by ComfyUI's own code. `replacements`: a callable that returns ComfyUI's node
+    """NodeKinds from ComfyUI's NODE_CLASS_MAPPINGS (a callable that returns it, read at each new node type), with a
+    dynamic node's inputs worked out by ComfyUI's own code. `replacements`: a callable that returns ComfyUI's node
     replacement manager (default: the running server's)."""
 
     def v3(klass) -> bool:
@@ -556,22 +540,19 @@ def comfy_kinds(mappings, replacements=None) -> NodeKinds:
 
 
 def kinds_problem(graph: dict, kinds: NodeKinds) -> str | None:
-    """What ComfyUI itself would run without validating, inside ComfyUI: 'unknown-node', 'unsafe-graph', or None.
+    """The checks that need the node classes, inside ComfyUI: 'unknown-node', 'unsafe-graph', or None.
 
-    validate_prompt validates from the output nodes, through the inputs each node lists (validate_inputs). The
-    scheduler (TopologicalSort.add_node) follows a link in any input of a node. So a link in an input the node doesn't
-    list (or a hidden one) runs the node it names unvalidated. A loop (validate_loops, Start Loop's expansion) runs
-    nodes downstream of an output and its body without validating them."""
+    A link goes only into an input the node lists as required or optional, and no input names a hidden one. A missing
+    node type that ComfyUI has a node replacement for is refused. In a graph with a loop, every node is reached from an
+    output node through links."""
     missing = False
     for node in graph.values():
         if kinds.found(node["class_type"]) is False:
-            # ComfyUI swaps a missing node type for another (apply_replacements) after this check, with other inputs.
             if kinds.replaced(node["class_type"]):
                 return "unknown-node"
             missing = True
     if missing:
-        # validate_prompt refuses the whole graph (missing_node_type) before it validates or runs any node of it, and
-        # says which node type is missing.
+        # ComfyUI refuses the graph itself (missing_node_type) and says which node type is missing.
         return None
     loop = False
     for node in graph.values():
@@ -600,22 +581,20 @@ def kinds_problem(graph: dict, kinds: NodeKinds) -> str | None:
 
 
 def is_link(v) -> bool:
-    """[node id, output slot]: a value another node works out. Every value ComfyUI reads as a link
-    (comfy_execution/graph_utils.py is_link): the slot may be any number, true or false too. ComfyUI reads [n, false] as
-    output 0, [n, true] as output 1 and [n, -1] as the last output."""
+    """[node id, output slot]: a value another node works out. The same test as ComfyUI's own is_link
+    (comfy_execution/graph_utils.py): the slot is any number, true or false."""
     return isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and isinstance(v[1], (int, float))
 
 
 def plain_slot(v) -> bool:
     """A link whose slot is written the way Fuobe's graphs (and ComfyUI's own page) write it: a whole number from 0
-    (0, 1, 2 ...). Any other form is refused: -1 is the last output, which the checks here would take for another
-    one, and Fuobe's graphs never write true, false or a number with a point."""
+    (0, 1, 2 ...). Any other form (true, false, -1, a number with a point) is refused."""
     return type(v[1]) is int and 0 <= v[1] < 1000
 
 
 def link_problem(graph: dict, cls: str, key: str, v, kinds: NodeKinds | None = None) -> str | None:
-    """A link from an output ComfyUI doesn't type-check, or into a dropdown, that Fuobe's own graphs don't make:
-    'unsafe-graph'. A link to no node is ComfyUI's to refuse."""
+    """A link from a loosely typed output, or into a dropdown, that Fuobe's own graphs don't make: 'unsafe-graph'. A
+    link to no node is ComfyUI's to refuse."""
     src = graph.get(v[0])
     if not isinstance(src, dict) or not isinstance(src.get("class_type"), str):
         return None
@@ -632,10 +611,10 @@ def input_problem(graph: dict, cls: str, key: str, v, kinds: NodeKinds | None = 
         shape = OBJECT_INPUTS.get((cls, key))
         return None if shape is not None and shape(v) else "unsafe-graph"
     if isinstance(v, list) and not is_link(v):
-        # ComfyUI reads a list as a link: one that isn't [node, output] is never a value a node gets as written.
+        # A list that isn't a link [node, output].
         return "unsafe-graph"
     if isinstance(v, float) and not math.isfinite(v):
-        # NaN passes every min and max ComfyUI checks.
+        # NaN or infinity.
         return "unsafe-graph"
     if is_link(v) and not plain_slot(v):
         return "unsafe-graph"
@@ -741,7 +720,7 @@ def graph_problem(graph, staged: list[str] | None) -> str | None:
             if v is None:
                 continue
             if isinstance(v, list):
-                # The studio names its files as values; a loader fed by another node could be fed any name.
+                # The studio names its files as values, never as links.
                 if known:
                     return f"Node {node_id} ({cls}) reads a file named by another node"
                 continue
@@ -769,7 +748,8 @@ def graph_problem(graph, staged: list[str] | None) -> str | None:
 def vet_graph(graph, allowed: frozenset | set, staged: list[str] | None, kinds: NodeKinds | None = None) -> str | None:
     """The first reason this graph may not run here, or None. The reasons are the worker program's
     ('unknown-node', 'unsafe-path') and 'unsafe-graph': a loader that reads a file this run didn't send, a JSON object
-    or a list the graph writes, a key ComfyUI reads as its own, or a link from a node that may not feed that input.
+    or a list the graph writes, a node key other than its type, inputs and title, or a link from a node that may not
+    feed that input.
     `kinds`: what ComfyUI's node classes say (inside ComfyUI); without it, only the shipped list of untyped outputs is
     known, and the checks that need the node classes (kinds_problem) are left out."""
     if not isinstance(graph, dict) or not graph or len(graph) > 5000:
@@ -802,8 +782,8 @@ def vet_graph(graph, allowed: frozenset | set, staged: list[str] | None, kinds: 
 
 
 def _strings(v, depth: int = 0):
-    """Every text in an input value (a picture entry list is a dict of texts). A link [node, slot] has none: ComfyUI
-    reads one only as the input's whole value, so a list inside a value is read for its texts like any other."""
+    """Every text in an input value (a picture entry list is a dict of texts). A link [node, slot], as an input's whole
+    value, has none; a list inside a value is read for its texts like any other."""
     if isinstance(v, str):
         yield v
     elif isinstance(v, dict) and depth < 4:

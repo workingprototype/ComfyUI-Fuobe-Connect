@@ -5,8 +5,8 @@ computer, the way ComfyUI's own page uses it at `http://127.0.0.1:8188`. You do 
 or a changed start file. It adds no nodes. It is optional: Fuobe also runs without it.
 
 The source of this pack is the `integrations/fuobe-connect` folder of the Fuobe repository:
-<https://github.com/workingprototype/Fuobe/tree/main/integrations/fuobe-connect>. This repository is a copy of that
-folder. Every change is made there first.
+<https://github.com/workingprototype/Fuobe/tree/main/integrations/fuobe-connect>. Every change is made there first,
+and each release is published from that folder.
 
 ## Two modes
 
@@ -76,8 +76,8 @@ allow that (below). Its page can:
   - a link has the form that ComfyUI's page writes: a node's id and an output number from 0 (`["4", 0]`). A value
     written in the workflow is a text, a number, `true`, `false` or `null`. A 3D view's entries have the form of
     ComfyUI's own 3D nodes;
-  - a node holds only its type, its inputs and its title, and every node that ComfyUI runs is one that ComfyUI checks
-    first.
+  - a node holds only its type, its inputs and its title. A link goes only into an input that the node lists, and in
+    a workflow with a loop, every node feeds an output node.
 
   Its workflows save their results into your output folder, as ComfyUI's own page does;
 - see, follow, cancel, stop and remove only the prompts it queued (and a batch's later passes, which save under
@@ -107,8 +107,8 @@ When it is set, it wins over the setting, and ComfyUI shows a note about it.
 
 **Your own node list.** If your studio uses a node type that isn't on the shipped list, add it to
 `fuobe-connect-nodes.json` in ComfyUI's `user` folder: `{"nodes": ["MyNode"]}`. Only you can change this file. A
-studio can't. Every check above applies to your nodes too: a workflow can't link from an output of theirs that
-ComfyUI doesn't type-check, or into a dropdown of theirs.
+studio can't. Every check above applies to your nodes too, including the rules for links from loosely typed outputs
+and into dropdowns.
 
 **A network address.** A trusted studio reaches this ComfyUI only on this computer. To let it reach a ComfyUI that
 runs with `--listen` at a network address, start ComfyUI with `FUOBE_CONNECT_LAN=1`. Its requests get the same checks
@@ -186,8 +186,10 @@ python -m unittest discover -s tests
 
 The tests load ComfyUI's own origin check and run it behind Fuobe Connect over real HTTP on ports 3360, 3364, 3365
 and 3366. Set `FUOBE_CONNECT_TEST_PORT` to move them (the tests use that port and the three after it, +4 to +6). Set
-`COMFYUI_DIR` to a ComfyUI folder to read the middleware from that copy of ComfyUI. The tests need only `aiohttp`.
-They do not need models, a GPU or a running ComfyUI. The `tests` folder is not part of the published pack.
+`COMFYUI_DIR` to a ComfyUI folder to read the middleware from that copy of ComfyUI. Run them with ComfyUI's own Python
+as well, and `tests/test_comfy_kinds.py` also checks workflows with that ComfyUI's own node classes, on the CPU. The
+other tests need only `aiohttp`. No test needs models, a GPU or a running ComfyUI. The `tests` folder is not part of
+the published pack.
 
 ## Releases
 
@@ -197,7 +199,7 @@ publish a version:
 1. In the Fuobe repository, set the new version in `pyproject.toml` and in `fuobe_connect/__init__.py`. The tests
    check that the two are the same.
 2. Bring that folder into this repository as one new commit.
-3. Push a tag with the same version and a `v` in front, for example `v1.0.1`.
+3. Push a tag with the same version and a `v` in front, for example `v1.0.2`.
 
 The tag starts the workflow `.github/workflows/publish.yml`. The workflow publishes nothing when the tag and the
 version in `pyproject.toml` are different, or when the repository has no publishing key (the secret

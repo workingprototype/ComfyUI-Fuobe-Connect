@@ -140,8 +140,7 @@ def trusted_origins(env_value: str | None, configured: str | list | None) -> tup
 # body or the answer of several of these (middleware.py).
 
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-# A model folder's list. ComfyUI also answers for folders that hold no models: custom_nodes (every file of every node
-# pack) and configs.
+# A model folder's list: any folder ComfyUI lists except custom_nodes and configs, which hold no models.
 _MODELS = r"models(?:/(?!(?:custom_nodes|configs)\Z)[A-Za-z0-9_.-]{1,64})?"
 _GET = re.compile(
     r"/(?:"
