@@ -1,0 +1,47 @@
+# Publishes Fuobe Connect to the Comfy Registry (https://registry.comfy.org), which ComfyUI-Manager searches.
+# It runs when a version tag such as v1.0.1 is pushed, or by hand. The tag must match the version in pyproject.toml.
+# Needs the repository secret REGISTRY_ACCESS_TOKEN: a publishing key of the "workingprototype" Registry publisher.
+# Without that secret the job publishes nothing and says so.
+name: Publish to the Comfy Registry
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'workingprototype' }}
+    env:
+      HAS_KEY: ${{ secrets.REGISTRY_ACCESS_TOKEN != '' }}
+    steps:
+      - name: No publishing key
+        if: ${{ env.HAS_KEY != 'true' }}
+        run: echo "::warning::The repository secret REGISTRY_ACCESS_TOKEN isn't set, so nothing was published."
+      - name: Check out
+        if: ${{ env.HAS_KEY == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag matches the version
+        if: ${{ env.HAS_KEY == 'true' && github.ref_type == 'tag' }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match version $version in pyproject.toml, so nothing was published."
+            exit 1
+          fi
+      - name: Publish
+        if: ${{ env.HAS_KEY == 'true' }}
+        # main on 2025-05-10. The 1.0.1 tag runs `comfy --yes env`, an option that comfy-cli no longer has.
+        uses: Comfy-Org/publish-node-action@d2366e7abb6ab16f3bb03e3520ae25c8cf749bc9
+        with:
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+          skip_checkout: "true"
